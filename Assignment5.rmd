@@ -1,0 +1,445 @@
+---
+title: "Assignment5"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-10-03"
+---
+
+
+
+
+#Setup
+
+```{r}
+set.seed(123)  # change if you want a different random sample
+```
+
+```{r}
+path <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets/weight-height.csv"
+```
+
+
+```{r}
+dat <- read.csv(path, stringsAsFactors = FALSE)
+```
+
+
+## Standardize column names commonly seen in weight-height datasets
+```{r}
+names(dat) <- gsub("\\s+", "_", tolower(names(dat)))
+```
+
+## Expected columns: gender (or sex), height, weight
+```{r}
+possible_gender <- intersect(names(dat), c("gender","sex"))
+if (length(possible_gender) == 0) stop("Couldn't find a 'gender' or 'sex' column.")
+gender_col <- possible_gender[1]
+
+if (!("height" %in% names(dat))) stop("Couldn't find a 'height' column.")
+if (!("weight" %in% names(dat))) stop("Couldn't find a 'weight' column.")
+```
+
+
+# Expected columns: gender (or sex), height, weight
+```{r}
+possible_gender <- intersect(names(dat), c("gender","sex"))
+if (length(possible_gender) == 0) stop("Couldn't find a 'gender' or 'sex' column.")
+gender_col <- possible_gender[1]
+
+if (!("height" %in% names(dat))) stop("Couldn't find a 'height' column.")
+if (!("weight" %in% names(dat))) stop("Couldn't find a 'weight' column.")
+```
+
+
+
+# Coerce gender values to a simple 'Male'/'Female' if needed
+```{r}
+dat[[gender_col]] <- trimws(dat[[gender_col]])
+```
+
+## Heuristic mapping for common encodings
+```{r}
+dat$gender_std <- ifelse(tolower(dat[[gender_col]]) %in% c("male","m","man","men"),
+                         "Male",
+                         ifelse(tolower(dat[[gender_col]]) %in% c("female","f","woman","women"),
+                                "Female", NA))
+if (any(is.na(dat$gender_std))) {
+  warning("Some rows have unrecognized gender labels; they will be dropped.")
+}
+dat <- subset(dat, !is.na(gender_std))
+```
+
+
+# 1) Randomly pick 20 males and 20 females (without replacement)
+
+```{r}
+male_pool   <- subset(dat, gender_std == "Male")
+female_pool <- subset(dat, gender_std == "Female")
+
+if (nrow(male_pool) < 20 || nrow(female_pool) < 20) {
+  stop("Not enough males or females to sample 20 each.")
+}
+
+male_idx   <- sample(nrow(male_pool),   20, replace = FALSE)
+female_idx <- sample(nrow(female_pool), 20, replace = FALSE)
+
+male_samp   <- male_pool[male_idx,   , drop = FALSE]
+female_samp <- female_pool[female_idx, , drop = FALSE]
+```
+
+# 2) Welch t-tests (default in t.test) for Height and Weight
+```{r}
+t_height <- t.test(male_samp$height, female_samp$height, alternative = "two.sided")
+t_weight <- t.test(male_samp$weight, female_samp$weight, alternative = "two.sided")
+
+cat("=== Initial Welch t-tests (20 males vs 20 females) ===\n")
+cat(sprintf("Height:  mean_M = %.3f, mean_F = %.3f, p = %.5f\n",
+            mean(male_samp$height), mean(female_samp$height), t_height$p.value))
+cat(sprintf("Weight:  mean_M = %.3f, mean_F = %.3f, p = %.5f\n\n",
+            mean(male_samp$weight), mean(female_samp$weight), t_weight$p.value))
+```
+
+#Initial Welch t-tests (20 males vs 20 females) ===
+#Height:  mean_M = 68.295, mean_F = 62.644, p = 0.00000
+#Weight:  mean_M = 179.031, mean_F = 128.596, p = 0.00000
+
+
+#Increment female heights by +0.1 steps until p >= 0.05
+```{r}
+alpha <- 0.05
+step  <- 0.1
+
+p_at_increment <- function(inc) {
+  adj_female_h <- female_samp$height + inc
+  t.test(male_samp$height, adj_female_h)$p.value
+}
+
+inc <- 0
+current_p <- p_at_increment(inc)
+```
+
+#If already non-significant at 0 increment, the 'max keep' is 0
+```{r}
+if (current_p >= alpha) {
+  max_increment_keep <- 0
+} else {
+  repeat {
+    next_inc <- inc + step
+    next_p   <- p_at_increment(next_inc)
+    if (next_p >= alpha) {
+      max_increment_keep <- inc  # last increment that kept p < alpha
+      break
+    } else {
+      inc <- next_inc
+      current_p <- next_p
+      # safety cap: if you want to limit the search
+      if (inc > 1000) stop("Increment grew unreasonably large; check data.")
+    }
+  }
+}
+```
+
+
+# Report the threshold behavior
+```{r}
+final_p_at_keep <- p_at_increment(max_increment_keep)
+first_nonsig_inc <- max_increment_keep + step
+first_nonsig_p   <- p_at_increment(first_nonsig_inc)
+
+cat("=== Increment test on female heights (+0.1 steps) ===\n")
+cat(sprintf("Max increment retaining significance (p < %.2f): %.1f\n", alpha, max_increment_keep))
+cat(sprintf("p-value at that increment: %.5f\n", final_p_at_keep))
+cat(sprintf("At the next step (%.1f), p-value becomes: %.5f (>= %.2f => not significant)\n\n",
+            first_nonsig_inc, first_nonsig_p, alpha))
+```
+#Resutls of Increment test on female heights (+0.1 steps)
+#Max increment retaining significance (p < 0.05): 4.1
+#p-value at that increment: 0.04651
+#At the next step (4.2), p-value becomes: 0.06152 (>= 0.05 => not significant)
+
+#table of increments near the threshold
+```{r}
+nearby <- seq(max(0, max_increment_keep - 0.5), max_increment_keep + 0.5, by = 0.1)
+tab <- data.frame(increment = nearby,
+                  p_value  = sapply(nearby, p_at_increment))
+print(tab, row.names = FALSE)
+```
+
+#Q2 Answer: The highest number that can be added is 4.1
+
+
+#Set up to reproduce the sampling and compare the “max increment” with and without setting female heights to their mean.
+
+```{r}
+male_samp   <- subset(dat, gender_std=="Male")
+female_samp <- subset(dat, gender_std=="Female")
+male_samp   <- male_samp[sample(nrow(male_samp), 20), ]
+female_samp <- female_samp[sample(nrow(female_samp), 20), ]
+```
+
+```{r}
+alpha <- 0.05; step <- 0.1
+```
+
+```{r}
+max_keep <- function(male_h, female_h, alpha=0.05, step=0.1) {
+  pv <- function(inc) t.test(male_h, female_h + inc)$p.value
+  inc <- 0
+  if (pv(0) >= alpha) return(0)
+  repeat {
+    if (pv(inc + step) >= alpha) return(inc)
+    inc <- inc + step
+    if (inc > 1000) stop("Increment too large; check data.")
+  }
+}
+```
+
+
+# Original data
+```{r}
+orig_max <- max_keep(male_samp$height, female_samp$height, alpha, step)
+```
+
+#Female heights collapsed to their mean
+```{r}
+f_mean <- mean(female_samp$height)
+flat_max <- max_keep(male_samp$height, rep(f_mean, length(female_samp$height)), alpha, step)
+```
+
+```{r}
+cat(sprintf("Max increment (original variances): %.1f\n", orig_max))
+cat(sprintf("Max increment (female heights = mean): %.1f\n", flat_max))
+```
+
+#Max increment (original variances): 4.1
+#Max increment (female heights = mean): 4.5
+
+
+#Q3 Answer: Yes, setting every female height equal to the female mean let you add more before losing significance: the maximum increment rose from 4.1 to 4.5 (same units as your dataset, typically inches).
+
+#Q4 Answer: The “maximum addable amount” from Q2 is determined by the difference in sample means relative to the pooled standard error, which depends on each group’s standard deviation and sample size.
+
+#Part II
+
+# Order by height within sex and pick top/bottom 20
+```{r}
+male_ord_desc <- male_pool[order(-male_pool$height), ]
+male_ord_asc  <- male_pool[order( male_pool$height), ]
+female_ord_desc <- female_pool[order(-female_pool$height), ]
+female_ord_asc  <- female_pool[order( female_pool$height), ]
+```
+
+```{r}
+mt <- transform(male_ord_desc[1:20, ],   group = "mt")  # male-tall
+ms <- transform(male_ord_asc[1:20, ],    group = "ms")  # male-short
+ft <- transform(female_ord_desc[1:20, ], group = "ft")  # female-tall
+fs <- transform(female_ord_asc[1:20, ],  group = "fs")  # female-short
+```
+```{r}
+grp <- rbind(mt, ms, ft, fs)
+grp$group <- factor(grp$group, levels = c("ms","fs","ft","mt"))  # optional ordering
+```
+
+
+#pairwise Welch t-tests
+```{r}
+pairwise_welch <- function(df, response, group_col = "group", p_adjust = "holm") {
+  groups <- levels(df[[group_col]])
+  combos <- t(combn(groups, 2))
+  out <- apply(combos, 1, function(ab) {
+    g1 <- df[df[[group_col]] == ab[1], response]
+    g2 <- df[df[[group_col]] == ab[2], response]
+    tt <- t.test(g1, g2)  # Welch by default
+    c(group1 = ab[1], group2 = ab[2],
+      mean1 = mean(g1), mean2 = mean(g2),
+      diff = mean(g1) - mean(g2),
+      p_value = tt$p.value)
+  })
+  out <- as.data.frame(t(out), stringsAsFactors = FALSE)
+  numeric_cols <- c("mean1","mean2","diff","p_value")
+  out[numeric_cols] <- lapply(out[numeric_cols], as.numeric)
+  out$p_adj <- p.adjust(out$p_value, method = p_adjust)
+  out[order(out$p_value), ]
+}
+```
+
+# Pairwise t-tests between the four groups (Height & Weight)
+```{r}
+cat("\n=== Pairwise Welch t-tests: HEIGHT ===\n")
+pw_height <- pairwise_welch(grp, "height")
+print(within(pw_height, {
+  mean1 <- round(mean1, 3); mean2 <- round(mean2, 3)
+  diff  <- round(diff, 3);  p_value <- signif(p_value, 4); p_adj <- signif(p_adj, 4)
+}))
+
+cat("\n=== Pairwise Welch t-tests: WEIGHT ===\n")
+pw_weight <- pairwise_welch(grp, "weight")
+print(within(pw_weight, {
+  mean1 <- round(mean1, 3); mean2 <- round(mean2, 3)
+  diff  <- round(diff, 3);  p_value <- signif(p_value, 4); p_adj <- signif(p_adj, 4)
+}))
+```
+
+# One-way ANOVA across the four groups (Height & Weight)
+```{r}
+cat("\n=== One-way ANOVA: HEIGHT ~ group ===\n")
+aov_h <- aov(height ~ group, data = grp)
+print(summary(aov_h))
+cat("\nPost-hoc Tukey HSD for HEIGHT:\n")
+print(TukeyHSD(aov_h))
+
+cat("\n=== One-way ANOVA: WEIGHT ~ group ===\n")
+aov_w <- aov(weight ~ group, data = grp)
+print(summary(aov_w))
+cat("\nPost-hoc Tukey HSD for WEIGHT:\n")
+print(TukeyHSD(aov_w))
+```
+
+
+# Q1 Answer: All six pairwise comparisons are significant for both height and weight after multiplicity correction so all groups are different.There is also an order to height: (shortest → tallest): fs < ms < ft < mt so males are taller than the shortest females but not the tallest females. Weight ordering (lightest → heaviest): fs < ms < ft < mt. So even the shortest males are heavier than the shortest females but not the tallest females. Likewise for the tallest. In short, gender cannot always infer weight, but if we include the variable height it gives us a better ability to predict the weight. Overall, extremes-by-height within sex produce large, clear separations in both traits; sex and height class both contribute.The anova: HEIGHT ~ group: F(3,76) = 4101, p < 2×10^-16 → group membership explains almost all height variation among these 80 subjects and WEIGHT ~ group: F(3,76) = 605.5, p < 2×10^-16 → groups also differ strongly in weight. Tukey HSD shows every pair is significantly different for both traits. Overall, because groups were chosen from extremes, the between-group contrasts are amplified (by design). With equal group sizes, ANOVA is fairly robust, and the results clearly indicate strong group effects on both height and weight.
+
+
+#Q2 setup
+
+```{r}
+male_pool   <- subset(dat, gender_std == "Male")
+female_pool <- subset(dat, gender_std == "Female")
+stopifnot(nrow(male_pool) >= 40, nrow(female_pool) >= 40)
+```
+
+## Build the four groups as before
+```{r}
+male_ord_desc   <- male_pool[order(-male_pool$height), ]
+male_ord_asc    <- male_pool[order( male_pool$height), ]
+female_ord_desc <- female_pool[order(-female_pool$height), ]
+female_ord_asc  <- female_pool[order( female_pool$height), ]
+```
+```{r}
+mt <- transform(male_ord_desc[1:20, ],   group = "mt")
+ms <- transform(male_ord_asc[1:20, ],    group = "ms")
+ft <- transform(female_ord_desc[1:20, ], group = "ft")
+fs <- transform(female_ord_asc[1:20, ],  group = "fs")
+```
+## Order ms from shortest to tallest (already asc) and delete from the top
+```{r}
+ms <- ms[order(ms$height), ]
+```
+
+## Smallest k deletions s.t. p >= alpha (Welch t-test)
+```{r}
+find_k_to_nonsig <- function(ms_df, other_df, response = c("height","weight"), alpha = 0.05) {
+  response <- match.arg(response)
+  for (k in 0:(nrow(ms_df)-2)) {  # leave at least 2 obs to run t.test
+    ms_sub <- ms_df[(k+1):nrow(ms_df), response]
+    other  <- other_df[, response]
+    p <- t.test(ms_sub, other)$p.value
+    if (p >= alpha) return(list(k = k, p = p))
+  }
+  list(k = NA_integer_, p = NA_real_)  # never became non-significant
+}
+
+pairs <- list(
+  `ms_vs_fs` = list(other = fs),
+  `ms_vs_ft` = list(other = ft),
+  `ms_vs_mt` = list(other = mt)
+)
+
+out <- do.call(rbind, lapply(names(pairs), function(nm) {
+  other <- pairs[[nm]]$other
+  res_h <- find_k_to_nonsig(ms, other, "height", alpha = 0.05)
+  res_w <- find_k_to_nonsig(ms, other, "weight", alpha = 0.05)
+  data.frame(
+    comparison = nm,
+    k_height_to_p_ge_0.05 = res_h$k,
+    p_height_at_k         = res_h$p,
+    k_weight_to_p_ge_0.05 = res_w$k,
+    p_weight_at_k         = res_w$p,
+    stringsAsFactors = FALSE
+  )
+}))
+print(out)
+```
+#Q2 Answer: Height: Deleting the shortest males from ms never made the height difference non-significant against fs, ft, or mt before the observations ran out (here it stops at 2 left). In the table this appears as k = NA for all three height comparisons. Interpretation: the height gaps between ms and each of the other groups are so large that even aggressive trimming of ms (by height) does not erase significance. Weight: ms vs fs: we must delete k = 18 for the weight comparison to become not significant at α = 0.05, with p ≈ 0.0667. Ms vs ft: likewise k = 18 is needed, yielding p ≈ 0.1075. Ms vs mt: no feasible k made the weight difference non-significant (k = NA). Overall, for height, the group separations are extremely strong—removing ms cannot remove significance. For weight, only an extreme deletion (18/20) makes ms comparable to fs or ft at α = 0.05, and ms remains clearly different from mt regardless.
+
+
+#Question 3 Setup
+
+
+# Build the four groups exactly as before
+```{r}
+male_ord_desc   <- male_pool[order(-male_pool$height), ]
+male_ord_asc    <- male_pool[order( male_pool$height), ]
+female_ord_desc <- female_pool[order(-female_pool$height), ]
+female_ord_asc  <- female_pool[order( female_pool$height), ]
+
+mt <- transform(male_ord_desc[1:20, ],   group = "mt")  # male-tall
+ms <- transform(male_ord_asc[1:20, ],    group = "ms")  # male-short
+ft <- transform(female_ord_desc[1:20, ], group = "ft")  # female-tall
+fs <- transform(female_ord_asc[1:20, ],  group = "fs")  # female-short
+```
+
+# Order ft from tallest to shortest and delete from the top
+```{r}
+ft <- ft[order(-ft$height), ]  # descending by height (tallest first)
+```
+# Helper: smallest k deletions s.t. p >= alpha (Welch t-test)
+```{r}
+find_k_to_nonsig <- function(focus_df, other_df, response = c("height","weight"), alpha = 0.05,
+                             delete_from = c("top","bottom")) {
+  response    <- match.arg(response)
+  delete_from <- match.arg(delete_from)
+
+  n <- nrow(focus_df)
+  for (k in 0:(n-2)) {  # keep at least 2 obs in the test group
+    if (k == 0) {
+      focus_sub <- focus_df[, response]
+    } else if (delete_from == "top") {
+      focus_sub <- focus_df[(k+1):n, response]   # drop first k rows
+    } else {
+      focus_sub <- focus_df[1:(n-k), response]   # drop last k rows
+    }
+    p <- t.test(focus_sub, other_df[, response])$p.value
+    if (p >= alpha) return(list(k = k, p = p))
+  }
+  list(k = NA_integer_, p = NA_real_)
+}
+```
+## Run comparisons: ft vs fs, ms, mt (delete tallest from ft)
+```{r}
+pairs <- list(
+  `ft_vs_fs` = list(other = fs),
+  `ft_vs_ms` = list(other = ms),
+  `ft_vs_mt` = list(other = mt)
+)
+```
+```{r}
+out_ft <- do.call(rbind, lapply(names(pairs), function(nm) {
+  other <- pairs[[nm]]$other
+  res_h <- find_k_to_nonsig(ft, other, "height", alpha = 0.05, delete_from = "top")
+  res_w <- find_k_to_nonsig(ft, other, "weight", alpha = 0.05, delete_from = "top")
+  data.frame(
+    comparison = nm,
+    k_height_to_p_ge_0.05 = res_h$k,
+    p_height_at_k         = res_h$p,
+    k_weight_to_p_ge_0.05 = res_w$k,
+    p_weight_at_k         = res_w$p,
+    stringsAsFactors = FALSE
+  )
+}))
+print(out_ft)
+```
+
+#Height: For all three comparisons—ft vs fs, ft vs ms, and ft vs mt—there is no finite k that makes the height difference non-significant (p ≥ 0.05) when deleting the tallest women from ft. In the above table this appears as k = NA for height. Interpretation: even after trimming ft down to just two observations, the height gaps remain large enough (relative to the remaining variability) to stay significant. Weight: One has to delete k = 18 (i.e., 18 of the 20 tallest ft women) for all three weight comparisons to become not significant at α = 0.05, with p-values: ft vs fs: p ≈ 0.0685, ft vs ms: p ≈ 0.1653, ft vs mt: p ≈ 0.0850. Takeaway: For height, the ft group is so distinct that even aggressive deletion of the tallest women does not erase significance against any other group. For weight, significance disappears only under very heavy trimming (k=18/20), and that loss of significance is largely a power/sample-size effect rather than genuine equality of means.
+
+
+#Q4 Answer:
+# Yes, but it would be improper statistics. Comparing ms (male–short) to ft (female–tall) is not a test of “males vs females.” It’s a test of two highly selected subpopulations: the shortest males and the tallest females. By construction, one almost always get ft > ms in height (and very significant p-values). Deleting the shortest males from ms or the tallest females from ft just exaggerates that reversal (and p-values can stay tiny), but it still doesn’t speak to the overall male vs female average.
+
+
+
+
+
+
+
+
