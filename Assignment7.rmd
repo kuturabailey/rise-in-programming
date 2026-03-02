@@ -1,0 +1,129 @@
+---
+title: "Assignment7"
+output: html_document
+date: "2025-10-15"
+---
+
+
+## Given pretest odds
+```{r}
+pretest_odds <- 1
+sens <- 0.8
+spec <- 0.10
+```
+
+## Likelihood ratios
+```{r}
+LR_pos <- sens / (1 - spec)
+LR_neg <- (1 - sens) / spec
+```
+
+## Post-test odds for a NEGATIVE result
+```{r}
+post_odds_neg <- pretest_odds * LR_neg
+``` 
+
+## Convert odds to probability
+```{r}
+odds_to_prob <- function(odds) odds / (1 + odds)
+pretest_prob <- odds_to_prob(pretest_odds)
+post_prob_neg <- odds_to_prob(post_odds_neg)
+```
+## Print results
+```{r}
+cat(sprintf("Pretest probability: %.4f (%.1f%%)\n", pretest_prob, 100*pretest_prob))
+cat(sprintf("LR-: %.4f\n", LR_neg))
+cat(sprintf("Post-test odds (negative): %.4f\n", post_odds_neg))
+cat(sprintf("Post-test probability (negative): %.4f (%.1f%%)\n\n", post_prob_neg, 100*post_prob_neg))
+```
+#Output: Pretest probability: 0.5000 (50.0%)
+#LR-: 2.0000
+#Post-test odds (negative): 2.0000
+#Post-test probability (negative): 0.6667 (66.7%)
+
+## Quality check with a hypothetical pool of 10,000 people
+```{r}
+N <- 10000
+prev <- pretest_prob               # 0.5
+D   <- N * prev                    # diseased
+H   <- N - D                       # healthy
+```
+
+
+# Test results
+```{r}
+TN <- H * spec                     # true negatives among healthy
+FN <- D * (1 - sens)               # false negatives among diseased
+Neg_total <- TN + FN
+```
+
+# Probability(disease/negative) from counts
+```{r}
+post_prob_neg_empirical <- FN / Neg_total
+
+cat(sprintf("Empirical P(disease | negative) from 10,000 cohort: %.4f (%.1f%%)\n",
+            post_prob_neg_empirical, 100*post_prob_neg_empirical))
+```
+
+#Output: P is 0.6667 (66.7%)
+
+#I will attempt to answer the question using Bayesian uncertainty principle to see if it is the same answer
+
+#Setup
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+prev_mean <- 0.5
+Se_mean   <- 0.8
+Sp_mean   <- 0.10
+```
+
+# Moderate-strength priors 
+```{r}
+prev_a <- 50; prev_b <- 50       # centers at 0.5
+Se_a   <- 16;  Se_b   <- 4       # centers at 0.8
+Sp_a   <- 1;   Sp_b   <- 9  
+```
+
+# Monte Carlo to propagate parameter uncertainty
+```{r}
+S <- 100000
+prev  <- rbeta(S, prev_a, prev_b)
+Se    <- rbeta(S, Se_a,   Se_b)
+Sp    <- rbeta(S, Sp_a,   Sp_b)
+```
+
+```{r}
+p_neg_given_D    <- 1 - Se
+p_neg_given_notD <- Sp
+
+p_D_given_neg_draws <- (p_neg_given_D * prev) /
+  (p_neg_given_D * prev + p_neg_given_notD * (1 - prev))
+```
+
+# Summary
+```{r}
+mean_p  <- mean(p_D_given_neg_draws)
+ci95    <- quantile(p_D_given_neg_draws, c(0.025, 0.975))
+list(
+  mean_P_D_given_negative = mean_p,
+  CI_95 = ci95
+)
+```
+#Output: $mean_P_D_given_negative
+#[1] 0.6925907
+#$CI_95
+# 2.5%     97.5% 
+#0.2659651 0.9862343 
+
+#Written Answer:
+
+#The pretest probability of disease was 0.5, which corresponds to pretest odds of 1 (a 50% chance of disease before testing). Using the given sensitivity of 0.8 and specificity of 0.10, the likelihood ratio for a negative test was calculated as (1−0.8)/0.10=2. The post-test odds are found by multiplying the pretest odds by this likelihood ratio, giving 1×2=2. Converting odds back to probability yields 2/(1+2)=0.67, or approximately a 66.7% chance of disease after a negative test. This result is paradoxical because, despite a negative result, the probability of disease actually increases from 50% to 66.7%. The low specificity of the test (only 10%) means that true negatives are rare, so a negative result is more likely to come from someone who actually has the disease. Therefore, the post-test odds of disease after a negative test are 2, showing that this diagnostic test is misleading and would not be clinically useful without considering its likelihood ratios beforehand.
+
+#To further examine how uncertainty in test performance could affect results, I performed a Bayesian uncertainty analysis priors centered on the given parameters (prevalence = 0.5, sensitivity = 0.8, specificity = 0.10). The simulation drew 100,000 samples from these distributions to propagate uncertainty through the Bayes formula. The resulting posterior mean for P(Disease/Negative) was approximately 0.693, with a 95% credible interval ranging from 0.266 to 0.986. This interval indicates that even when accounting for variability in the input parameters, the expected probability of disease after a negative test remains close to the deterministic estimate of 0.667. However, the wide credible interval reflects how sensitive the post-test probability is to uncertainty in specificity, which was modeled with a relatively weak prior. Overall, the Bayesian approach reinforces the paradoxical finding that a negative test result still implies a high likelihood of disease, highlighting that the test’s low specificity severely limits its diagnostic capabilities.
+
+
+
