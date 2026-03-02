@@ -1,0 +1,528 @@
+---
+title: "PGEB Assignment 2"
+author: "Jonathan Flowers"
+date: "2025-10-17"
+output:
+  html_document: default
+  pdf_document: default
+---
+#To allow kintting because Knitr is not allowed to install packages during rendering
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Population Genetics and Evolutionary Biology for Bioinformatics Assignment 2 (2025)
+
+This assignment covers common tasks in comparative genomics related to retrieval and interpretation of orthologs from publicly available databases, orthogroup prediction and related tasks using OrthoFinder, and multi-way comparisons of genome organization, gene families, and whole genome duplication (WGD) using MCSCanX.
+
+In this exercise, you will be introduced to the babelgene package for lightweight analysis of orthologs in humans and disease model organisms, evaluate outputs from Orthofinder for a model genetic organisms and evaluate MCScanX outputs to explore patterns of synteny and collinearity in the model plant Arabidopsis thaliana and two congeneric species. 
+
+### About the data
+
+The data are from David Emms Orthofinder tutorial or Wang et al. (2024) MCScanX Nature Protocols paper <https://doi.org/10.1038/s41596-024-00968-2>.
+
+### Data access
+
+Download the following from the Google Drive here:
+<https://drive.google.com/drive/folders/1-oJPYEKpqQtlfoFERlxUZ_S7zJTRbuh9?usp=sharing>
+
+OrthoFinder outputs (Task 2): `Results_model_species.tar.gz`
+MCScanX outputs (Task 3): `at.zip` 
+MCScanX Ka Ks outputs: (Task 4): `self.kaks`
+Dot plots (Task 5): `at_as_dot.png`  and `aa_as_dot.png`
+
+Optional: Download the data bundle from  Wang et al. (2024) Nature Protocols here: <https://zenodo.org/records/10023350>. This is an example of the full suite of outputs from running MCScanX and downstream utility tools that are reference in the Nature Protocols paper.
+
+Before proceeding, create a directory for this assignment, copy all downloads into that directory, unzip the directories and move this .Rmd to the assignment directory.
+
+### Completing your assignment
+
+This assignment is provided as an .Rmd file which can be open in RStudio and code chunks run interactively. 
+
+Please return an updated .Rmd and a knitted .html file, both with your answers. Please include your answers in **bold** and figures included after the appropriate questions. You can use this .Rmd document as a template. 
+
+If for some reason you are unable to return a knitted report, please include your report in a single pdf or word document.  
+
+On the NYU Brightspace website, you will find an entry for this assignment in the Assignment section. Please upload your completed assignment at the provided link.  
+
+**Please include your name in the filenames and inside the file of any uploads to Brightspace.**  
+
+### General instructions for completing your assignment
+
+For all tasks in this assignment you may wish to review materials from Weeks 4 through 6 including code reviews.
+
+Before beginning, you need to install the following R packages:
+#removed installs because with them I could not knit to html or pdf
+
+**The preferred way to complete the assignment is to first run the code interactively via RStudio (by clicking the green arrow in each code block beginning at the top of the .Rmd) and then fill in your answers below each question. You can help the TA by putting your answers in bold. You will then submit your assignment as knitted .html**
+
+### Task 1: Introduction to orthology databases
+
+Orthology prediction is an area of significant interest in comparative genomics. The most important reason to infer ortholog is they often have conserved functions in different organisms, particularly in close relatives of an organism of interest. A common use case is in a study of a non-model organism where experimental research is difficult (e.g., human) and where a genes function is unknown. Identification of the ortholog in a model species provides a simple means to develop hypotheses about the function of the protein. In this respect, orthologs act as a bridge between disease model organisms and humans and provide a means to develop hypotheses about gene function in humans even when direct experimental evidence of gene function is limited.
+
+Orthologs are genes in two different species that are derived from a single gene in the most recent common ancestor (MRCA) of the species pair. Orthologs are initially created by speciation when the MRCA split into two species. By contrast, paralogs are initially created by gene duplication. When the duplication occurred in a lineage since the MRCA, the outcome is a pair of "recent duplicates" or in paralogs. If the gene was already duplicated in the MRCA between two species before speciation, then the genes are "ancient duplicates" and referred to as out paralogs. Importantly, recent duplicates create one-to-many or many-to-many orthologs, or co-orthologs in a comparison between the two species being compared. This is probably the biggest source of confusion about orthology inference, because a pair of in paralogs are both paralogs with respect to each other, but also orthologs with respect to gene(s) in the paired species of interest.
+
+A large number of databases provide pre-computed orthology predictions. In fact, navigating which database to use is a challenge in and of itself. Major orthology databases include Ensembl Compara, OrthoDB, OrthoMCL, InParanoid, OrthoDB, Clusters of Orthologous Groups (COGs), Homologene and many others. They differ in their underlying methods for inferring orthology, the scope of organisms covered, data presentation, frequency of updates and suitability for different research applications. One of the major sources of conflict is that different methodologies can lead to different predictions, for example, due to the erroneous inclusion of out paralogs within an orthogroup.
+
+Orthogene and babelgene are two R packages that provide a programatic interface ortholog databases. Babelgene is a lightweight human and model genetic organism centric software that retrieves orthologs from Homologene, OMA, OrthoDB, OrthoMCL, Panther and Treefam and provides a support index that is just the count of databases that support an orthology assignment. One limitation of babelgene is that you cannot retrieve orthologs for non-human comparisons (e.g., mouse and chimpanzee). 
+
+Orthogene is a somewhat more complex tool providing additional functionality in terms of input and output formats and allows queries of gene ids from any species in the database to identify orthologs with any other. It only allows queries of Homologene, Gprofiler, and other databases via babelgene. Both tools allow gene identifier conversions between various source identifiers (e.g., ENSEMBL or NCBI Entrez IDs) and human HUGO gene names approved by the HUGO Gene Nomenclature Committee (HGNC <https://www.genenames.org>). 
+
+Here you will retrieve orthologs using babelgene and answer questions about the orthology predictions.
+
+To begin, we will retrieve ortholog(s) in humans for mouse gene Spata31, or NCBI Entrez ID 78124.
+
+```{r}
+# mouse Spata31 (Entrez/NCBI gene id is 78124)
+babelgene::orthologs(genes = c("Spata31"), species = "mouse", human = F, min_support = 6, top = F)
+```
+
+In the table output above, **all columns may not be visible via RStudio so you may need to scroll right or left using black arrows**. The "support" column indicates which databases includes the human gene as a predicted ortholog of the mouse gene query Spata31.  
+
+**Q1.1** Which of the following best describes the ortholog(s) from the output above. Select all that apply (1 point).
+(a) humans contain 3 orthologs of mouse gene Spata31
+(b) humans contain 3 in paralogs that are co-orthologs of Spata31
+(c) humans contain 3 out paralogs that are co-orthologs of Spata31
+(d) humans contain 3 xenologs that of mouse gene Spata31
+
+**A and B**
+
+
+**Q1.2** Now, write your own `babelgene::orthologs` function to identify the mouse ortholog(s) of the human genes from the output above. You will need to read the documentation (`?babelgene:orthologs`) to determine how to modify the fuction call to query mouse with human genes. Use  sure you indicate `min_support = 6` as in the example above. Add your code to the code block below (1 point).
+
+**CODE**
+```{r}
+babelgene::orthologs(
+  genes       = c("SPATA31A1", "SPATA31A5", "SPATA31A6"),
+  species     = "mouse",   # target species
+  human       = TRUE,      # input genes are human
+  min_support = 6,
+  top         = FALSE
+)
+```
+
+**Q1.3** Which of the following do you think best describes the SPATA31 family in mouse and human (1 point)?
+(a) SPATA31 represents a one-to-many (mouse-to-human) set of orthologs
+(b) SPATA31 represents a many-to-one (mouse-to-human) set of orthologs
+(c) SPATA31 represents a many-to-many set of orthologs
+(d) SPATA31 consists of many paralogs in humans, but only the top matching gene in human is the ortholog to mouse Spata31
+
+**A**
+
+Unfortunately, the picture can often be more complicated. One issue is that different databases use different algorithms, some of which are more sensitive and may include more genes. Let's rerun the originally babelgene query, but this time relax the constraint on the number of databases that support the orthologous predictions to 1 to see all predictions by all databases.
+```{r}
+# mouse Spata31 (Entrez/NCBI gene id is 78124)
+babelgene::orthologs(genes = c("Spata31"), species = "mouse", human = F, min_support = 1, top = F)
+```
+**Q1.4.** Which of the following best describes how reducing `min_support`impacts the results? Select the single best answer (1 point).
+
+
+
+
+(a) Some databases appear to include xenologs to mouse Spata31 that become apparent when relaxing the min_support argument
+(b) Some databases appear to include more human genes in their database which leads to more orthologs to mouse Spata31
+(c) Some databases appear to include some out paralogs as in paralogs thus increasing the number of orthologs to mouse Spata31
+(d) Some databases appear to include isoforms (alternative-splice variants) which results in what appears like more orthologs to mouse Spata31
+(e) Some databases appear to be more sensitive, but none of this impacts the number of orthologs which represent one-to-one relationships between species
+
+**C**
+
+**Q1.5.** Using your results with min_support = 1, which database or databases predicts the most human genes matches to Spata31 in the query? How many genes do they predict in humans (2 points)?
+
+**Answer: Panther (8) and OrthoDB (8)**
+
+**Q1.6.** Considering both the output genes of `babelgene::orthologs` for the OrthoMCL database in human and mouse, how many orthologs are there in the two species? Report separately the number of orthologs in mouse and human (2 points).
+
+**Answer: number of OrthoMCL orthologs (human) 5 and number of OrthoMCL orthologs (mouse) 1**
+
+BCL2A1 is a human gene that acts as an antagonist to programmed cell death (apoptosis) and is known to protect lymphocytes and myeloid cells during immune responses, but also promotes tumor growth in some cancers. A first step to studying this gene in a mouse model is to identify the orthologs of this gene because orthologs are often hypothesized to have the same or similar functions between species. 
+
+Use `babelgene::orthologs` to identify all mouse orthologs and any human genes that represent duplicates in the human lineage since the MRCA with mouse. For your answer, consider only the OrthoMCL predictions.
+
+```{r}
+library(dplyr)
+```
+
+## Find mouse orthologs of human BCL2A1
+**Answer:**
+```{r}
+bcl2a1_orth <- babelgene::orthologs(
+  genes       = "BCL2A1",   # human gene
+  species     = "mouse",    # target species
+  human       = TRUE,       # input gene is human
+  min_support = 1,          # see all DBs
+  top         = FALSE
+)
+
+## Keep only OrthoMCL predictions
+bcl2a1_orthoMCL <- bcl2a1_orth %>%
+  filter(grepl("OrthoMCL", support))
+
+## Mouse ortholog(s)
+unique_mouse_orthologs  <- unique(bcl2a1_orthoMCL$symbol)
+unique_mouse_orthologs
+
+## Human gene(s) represented in these OrthoMCL mappings
+unique_human_genes <- unique(bcl2a1_orthoMCL$human_symbol)
+unique_human_genes
+```
+**Mouse: Bcl2a1a" "Bcl2a1b" "Bcl2a1d" "Gm29094**
+**Human: BCL2A1**
+
+
+**Q1.7.** What are all the orthologs in mouse and human related to human BCL2A1 (1 point)?
+**Mouse: Bcl2a1a" "Bcl2a1b" "Bcl2a1d" "Gm29094**
+**Human: BCL2A1**
+
+
+
+**Q1.8.** Considering your results for orthologs of BCL2A1, assuming the results accurately reflect the true orthologs, do you think think that the results can be explained by deletions of ancestral genes (found in the MRCA) in the lineage with fewer genes, duplications in the lineage with more genes, or both. Explain (2 points).
+
+**If the OrthoMCL predictions accurately reflect the true evolutionary history, the best explanation is: duplications in the lineage with more genes. The mouse lineage experienced gene duplications after the human–mouse MRCA, producing multiple in-paralogs. There is no evidence of additional human paralogs or pseudogenes that would suggest deletions in the human lineage.** 
+
+### Task 2: Inference of Orthogroups using OrthoFinder
+
+In Task 1, the focus was on orthologs between a pair of species. When more than two species are of interest, the concept of orthology between two species can be extended to multiple species. Orthogroups also derive from a single gene found in the MRCA of the species of interest and consists of all genes derived originally from this gene including recent duplicates (in paralogs). 
+
+A key point is that the genes in the orthogroup will depend on the MRCA of the species in the analysis. For example, if the species in question are a broad sampling of Eutherian mammals and the MRCA is the ancestor of this clade, then the genes in an orthogroup would be different than if the analysis was limited to primates. Some databases such as OrthoDB (<https://www.orthodb.org/>) have pre-computed orthogroups for pre-defined clades (and their implicit MRCA). Other databases provide a single set of orthogroup predictions based on a single "reference" MRCA. This concept of "hierarchical" orthogroups was introduced in the pre-recorded videos and is important to keep in mind when performing orthogroup analysis.
+
+Orthofinder defines the reference MRCA based on the input species (specified by a list of proteome fasta files). Therefore, for any single run with a given set of species, the orthogroups can be intepreted with respect to the MRCA. Alterations to the input taxa that also change the MRCA of the species in question, would also change orthogroup assignments.
+
+David Emms, the developer of OrthoFinder, hosts a nice set of tutorials on running and interpreting OrthoFinder outputs:
+<https://davidemms.github.io/orthofinder_tutorials/downloading-and-running-orthofinder.html>
+
+In this Task you will analyze Orthofinder2 outputs. Unzip the `Results_model_species.tar.gz` directory and make sure the unzipped directory `Results_Nov26` is in the same directory as this .Rmd. These data were downloaded from the tutorial and consist of Human, Mouse, Zebrafish (Danio), Tropical clawed frog (Xenopus tropicalis, under ‘Amphibians’), Takifugu rubripes and Drosophila melanogaster (fruit fly). They were produced by running the following command line:
+
+`orthofinder.py -f proteomes/primary_transcripts/ -t 16 -a 8`
+
+Note that the proteomes included were first pre-processed to exclude all but one protein isoform per gene (i.e., what is sometimes called primary_transcripts (e.g., the longest isoform is often chosen as primary)). 
+
+The first step in an OrthoFinder analysis as discussed in our live session is to perform QC checks. Review the file
+`Comparative_Genomics_Statistics/Statistics_Overall.tsv` and determine if 80% of the genes assigned to orthogroups.
+```{r}
+# we can read unstructured text files in R using readLines
+readLines('Results_Nov26/Comparative_Genomics_Statistics/Statistics_Overall.tsv', n = -1)
+```
+Item 5 indicates that 92.9% of genes were assigned to orthogroups, so this looks ok.
+
+Now review, `Comparative_Genomics_Statistics/Statistics_PerSpecies.tsv`  using `readLines()` or any other method. On a per species basis, at least 80% of genes should be assigned to Orthogroups, but sometimes this is not the case especially when distant taxa are included in the analysis.
+
+**Answer**
+
+# Read per-species Orthofinder QC stats
+```{r}
+# Read the per-species stats table
+per_species <- read.table(
+  "Results_Nov26/Comparative_Genomics_Statistics/Statistics_PerSpecies.tsv",
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+# Look at the first column to see the row labels (the statistic names)
+per_species[[1]]
+# You should see entries like:
+# "Number of genes", "Number of genes in orthogroups",
+# "Percentage of genes in orthogroups", etc.
+
+# Extract the row that corresponds to "Percentage of genes in orthogroups"
+row_pct <- per_species[per_species[[1]] == "Percentage of genes in orthogroups", ]
+
+# Convert that row (excluding the first column with the label) to a numeric named vector
+pct_vec <- as.numeric(row_pct[ , -1])
+names(pct_vec) <- colnames(row_pct)[-1]
+
+# View per-species percentages
+pct_vec
+
+# Identify species with < 80% of genes in orthogroups
+pct_vec[pct_vec < 80]
+```
+
+**Q2.1.** Which species meet the criterion of 80% of genes assigned to orthogroups? Select all that apply (1 point)
+(a) Danio_rerio
+(b) Drosophila_melanogaster 
+(c) Homo_sapiens 
+(d) Mus_musculus
+(e) Takifugu_rubripes 
+(f) Xenopus_tropicalis
+
+**Answer: A,C, D, E, F**
+
+A final QC check is the species tree. Part of the Orthofinder2 algorithm to predict Orthogroups requires a step to resolve gene trees with the species tree. If the species tree is incorrect then this is a cause for concern about the
+trustworthiness of the results. The species tree is created by Orthofinder using dedicated STAG and STRIDE algorithms to produce a rooted tree.
+
+Read the species tree in Newick format using the `treeio::read.newick` function and plot use ggtree.
+
+
+```{r}
+library(ggtree)
+library(treeio)
+library(magrittr)
+```
+
+```{r}
+treeio::read.newick('Results_Nov26/Species_Tree/SpeciesTree_rooted.txt') %>%
+  ggtree() + geom_tree() + geom_tiplab(size = 3)
+```
+The tree supports a long branch to Drosophila melanogaster, the early divergence of fish, and the common ancestry of frogs and mammals. Therefore the species tree checks out and we can proceed. If it wasn't correct Orthofinder provides a means to run the analysis with an input tree.
+
+Before leaving the statistics, an interesting item to check is how many orthogroups are species-specific (i.e. contain one or more genes that are found in one species genome but not in any other). These genes are often sources of evolutionary innovation in specific lineages and can provide insight into how species-specific trait evolved. In studies of human pathogens or parasites, this class of genes is of great interest because genes specific to the pathogen make excellent druggable targets (because the risk of cross-reaction with human proteins is reduced). Review the entry for `"Number of species-specific orthogroups` in `Comparative_Genomics_Statistics/Statistics_PerSpecies.tsv` to identify species-specific orthogroups.
+
+The primary output of interest in Orthofinder is the file with orthogroup predictions, `Orthogroups/Orthogroups.tsv`.
+
+The following two code blocks show how to read the tab-delimited orthogroups to help visualize the data.
+Read the orthogroups file. **You are not restricted to using R to answer the questions in Task 2**
+
+
+```{r}
+library(tidyverse)
+orthogroups.tbl_df <- read_tsv(file = 'Results_Nov26/Orthogroups/Orthogroups.tsv',col_names = TRUE)
+```
+To visualize as a spreadsheet, open the "Environment" tab in RStudio and select `orthogroups.tbl_df` variable to open a spreadsheet that you can navigate to familiarize your with the results. Take note of the first orthogroup in the file OG0000000 which has no ortholog in mouse or frog and OG0000008 which is an zebrafish-specific orthogroup.
+
+If you are new to R, pivoting the data frame into long format is often a preferred approach for ease of conducting various groupwise operations:
+```{r}
+orthogroups.tbl_df %>%
+  pivot_longer(cols = -Orthogroup, names_to = 'species', values_to = 'gene_ids' )
+```
+
+Review the orthogroup with human gene ENSG00000140379 (BCL2A1) from Q1.7 and answer the following questions.
+
+**Q2.2** How many copies of this gene was there in the MRCA of the species in question (i.e., the MRCA of flies and vertebrates)? Select the single best answer (1 point).
+(a) 0 
+(b) 1
+(c) 2
+(d) 3
+(e) 4
+(f) 5
+(g) 6
+
+**B**
+
+Now find the orthogroup with BCL2A1 and visualize the gene tree of genes in this orthogroup. Orthofinder produces a gene tree in in the `Gene_Trees` output directory with files named by the orthogroup. Once you have found the BCL2A1 orthogroup, you can update the path in function below to visualize the tree for the orthogroup.
+
+```{r}
+library(tidyverse)
+
+orthogroups <- read_tsv("Results_Nov26/Orthogroups/Orthogroups.tsv")
+
+# find which orthogroup contains human BCL2A1
+filter(orthogroups, str_detect(Homo_sapiens, "ENSG00000140379"))
+```
+
+```{r}
+tree_file_path = '~/Documents/Population Genetics and Evolutionary Biology for Bioinformatics/Results_Nov26/Gene_Trees/OG0001898_tree.txt' # update with tree of interest
+
+library(ggtree)
+phylo <- treeio::read.newick(file = tree_file_path )
+phylo %>%
+  ggtree() + geom_tree() + geom_tiplab(size = 1.5)
+```
+
+**Q2.3** Based on the gene content and gene tree for the BCL2A1 orthogroup, which of the following do you think describe BCL2A1 and its closest homologs? Select all that apply (1 point)
+(a) the orthogroup appears to be vertebrate-specific because the orthogroup has no representative gene in fruit flies
+(b) the orthologous group is characterized by a single gene in the common ancestors of fish and frogs that then duplicated in the lineage leading to mammals
+(c) the additional genes in the orthogroup in mouse and human are best described as in paralogs with respect to the orthologs identified by babelgene
+(d) the additional genes in the orthogroup in mouse and human are best described as out paralogs with respect to the orthologs identified by babelgene
+(e) there is an error in either babelgene or orthofinder because there is more than 1 human gene and more than 4 mouse genes in the orthogroup
+
+**Answer: A, B, and D**
+
+Enzymes of central metabolism are often found as multi-copy genes or small gene families in fruit flies, humans, and other vertebrates. Glyceraldehyde-3-phosphate is a gene of the lower glycolytic pathway that functions in glycolysis and gluconeogenesis. 
+
+**Q2.4** Did these genes evolve from lineage-specific duplications from a single gene in a common ancestor, or were multiple copies, possibly with unique expression patterns or activities found in the common ancestor of these species?
+
+To answer these questions, you first need to find the relevant protein identifiers for the genes in question. Since Orthofinder was run with the mouse and human proteomes available at ENSEMBL and fruit genes from FlyBase we need to visit the these sites at <https://flybase.org/> and <https://ensembl.org/> to find the gene identifiers for these genes. At each site, use the "paralog" feature for the top matching GAPDH in your search to identify all putative paralogs within the fly and human genomes, then use this information to answer the question posed above. 
+
+For full credit, discuss your answer with relevant observations from the orthogroup predictions and relevant gene tree(s) (3 points)
+
+**GAPDH genes in human and fruit fly most likely descend from a single ancestral GAPDH gene, and the multiple copies we see are the result of lineage-specific duplications in vertebrates and in flies, rather than several distinct GAPDH copies already being present in the common ancestor. The orthogroup composition and gene tree topology (one shared orthogroup with species-specific expansion branches) support this interpretation.**
+
+
+### Task 3: Intro to MCScanX  
+
+MCScanX and doubletrouble are programs for detection of synteny and collinearity within and between genomes that can be applied to many problems in comparative genomics. The MCScanX algorithm scans for putative homologous chromosomal regions within species and between species genomes and aligns these regions using genes as anchors. From these syntenic alignments, 
+a set of 12 utility programs are available for visualization and analysis genome rearrangements (e.g., using dotplots, parallel plots etc), gene duplication (e.g., segmental duplication, tandem duplication, proximal duplication, transposed duplication etc), and  whole genome duplications. Here you will explore pre-computed MCScanX outputs to familiarize yourself with the functionality and results of this software.
+
+MCScanX works on all-by-all BLASTP (m8; i.e. a specific output format specified at the BLASTP command line) outputs and the genome annotation(s) in GFF format. The BLAST results required for MCScanX include the self-BLAST outputs of all proteins in each species proteome blasted against itself to identify segments of synteny and collinearity within genomes. All-by-all BLASTs for each pair of genomes in the analysis are then used to identify blocks of synteny and collinearity between species. 
+Collinear blocks are then inferred from the genome assembly coordinates of the BLAST hits using genomic coordinates for proteins recorded in the GFF. Pairs of genomic intervals within or between species with 5 or more homologous ("anchor") genes and fewer than 25 non-homologous ("gaps") genes between them are assigned to collinear blocks. 
+
+The Nature Protocols paper by Wang et al. (2024) provides details for how to perform a complete workflow to analyze comparative genomics data. Table 2 of the Nature Protocols paper lists program names, their purpose, and the input files required. Instructions for deployment of the tools are in the form of recipes in the Nature Protocols paper. The doubletrouble paper similarly provides an introduction to this software, but we will focus here on the MCScanX as the two tools have broadly overlapping functionality and the because MCScanX is the most popular package in this domain.
+
+Some of the questions might seem difficult before you understand the make up of the analysis files. For questions related to synteny and collinearity, consider the file with .collinearity file extension and the .html files in the at.html subdirectory. See also the explanation in the original MCScanX paper here: <https://academic.oup.com/nar/article/40/7/e49/1202057#:~:text=Figure%202.Sample,anchor%20genes%20are%20shown.>
+
+If you would like to review the full complement of outputs from the MCScanX Nature Protocols paper then you may download it from the Zenodo link above. For example, the file with extension `.collinearity` is a key file generated from BLASTP and the GFF coordinates of protein coding genes to derive the collnear blocks. It can be generated for either within or between species analysis is used by many of the downstream analysis and visualization tools.
+
+However, for the questions related to synteny and collinearity in Arabidopsis thaliana below you only need files in `at.zip` form the Google Drive.
+
+Duplicate gene classifier is an MCScanX tool that classifies genes within species as either singleton (observed as a single copy gene) or various classes of duplication. You can read more about the different types of duplication here <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4972278/#bib276>. 
+
+**Q3.1** How many gene duplications are there in each category reported by MCScanX in Arabidopsis thaliana (2 points)
+
+```{r}
+# Read MCScanX duplicate gene classifier output
+gene_types <- read_tsv("~/Documents/Population Genetics and Evolutionary Biology for Bioinformatics/at/at.gene_type", col_names = c("gene", "type"))
+
+# Count how many genes fall into each duplication category
+dup_counts <- gene_types %>%
+  count(type) %>%
+  arrange(desc(n))
+
+dup_counts
+```
+**Answer: WGD/segmental duplicates: 10,460 genes ; Dispersed duplicates: 7,364 genes ; Singletons: 5,298 genes; Proximal duplicates: 3,002 genes; Tandem duplicates: 1,045 genes**
+
+
+
+**Q3.2.** GATA10 transcription factor (AT1G08000) is duplicated in the Arabidopsis genome. What type of duplicate is it according to MCScanX outputs? (1 point)
+
+(a) dispersed
+(b) proximal
+(c) tandem
+(d) WGD or segmental
+
+```{r}
+library(readr)
+library(dplyr)
+
+gt <- read_tsv("~/Documents/Population Genetics and Evolutionary Biology for Bioinformatics/at/at.gene_type", col_names = FALSE)
+colnames(gt) <- c("gene","type")
+
+gt %>% filter(gene == "AT1G08000")
+```
+**Answer: D**
+
+For questions related to synteny and collinearity in Arabidopsis, you may wish to use at/at.collinearity, files in the at/at.html subdirectory and <https://www.arabidopsis.org/> ->Tools->JBrowse to assist you.
+
+**Q3.3.** AT3G05030 is at the beginning of collinear block of genes on chromosome 3 that is syntenic to a collinear block of genes on chromosome 5. Approximately how long is the block on chromosome 3 (1 point)? 
+
+**The collinear block on chr 3 is approximately 100 kb long (roughly from AT3G01010 to AT3G01340).**
+
+**Q3.4** Is the collinear block on chromosome 5 in the previous question inverted with respect to the block on chromosome 3 or is the block oriented in the same direction on the two chromosomes? (1 point)
+
+(a) Same orientation
+(b) Reverse orientation
+
+**Answer: A**
+
+**Q3.5.** How many of the genes in the region between  AT3G05030 and AT3G05640 (inclusive of these genes) have homologs in the collinear segment on chromosome 5 (1 point)?
+(a) 5
+(b) 10
+(c) 15
+(d) 20
+(e) 25
+(f) 30
+
+**Answer: 15**
+
+**Q3.6.** Which of the following consecutive genes in the collinear block on chromosome 3 do not have a homolog in the collinear segment on chromsome 5? Select all that apply (1 point).
+
+(a) AT3G05040
+(b) AT3G05090
+(c) AT3G05110
+(d) AT3G05320
+
+# Read the whole collinearity file
+```{r}
+col <- readLines("~/Documents/Population Genetics and Evolutionary Biology for Bioinformatics/at/at.collinearity")
+
+# Find the lines that contain the chr3 region 3G05030–3G05640
+hits <- grep("AT3G05", col, value = TRUE)
+
+hits
+```
+
+**Answer: B**
+
+**Q3.7** Gene AT1G13830 is a gene on chromosome 1 that has homologs on three additional collinear blocks around the Arabidopsis genome. Which of the following are homologs of this gene and found as "anchor" genes in these collinear segments (1 point)?
+
+(a) AT1G13820
+(b) AT1G26450
+(c) AT2G03505	  
+(d) AT2G03480
+(e) AT1G69295	 	 
+
+**Answer: B, C, and E**
+
+Imagine you are asked to distinguish if tandem segmental duplications are of more recent origin than dispersed segmental duplications. Which of the following do you think might best assist with answer this question. Select the single best answer.
+
+(a) use the %identity from BLASTP hits between duplicates as a measure of divergence between them
+(b) use Ka, the nonsynonymous rate of protein evolution as a measure of divergence between duplicates
+(c) use Ks, the synonymous rate of protein evolution as a measure of divergence between duplicates
+(d) use the ddegree of collinearity (percent of homologous genes between collinear blocks) as a proxy for divergence
+
+**Answer:  C**
+
+**Q3.8.** Why is distinguishing between gene duplications produced by ancient segmental duplications and duplications produced by WGD so difficult in vertebrates like humans that that have not experienced a recent WGD. Please provide a brief but thorough explanation (2 points)?
+
+**In vertebrates like humans, distinguishing ancient segmental duplications from whole-genome duplication–derived duplicates is difficult because the events occurred hundreds of millions of years ago, and the signatures that normally differentiate them have largely eroded. After such long evolutionary timescales, synonymous divergence (Ks) saturates, making age estimates unreliable; chromosomal rearrangements, gene loss, and local duplications overwrite the original collinearity patterns that would signal a WGD. As a result, genes originally duplicated by WGD often appear today as isolated pairs or small families that look no different from dispersed or segmental duplicates. This breakdown of synteny, combined with extensive genome reshuffling and differential gene retention, makes it extremely challenging to trace whether a gene pair originated from an ancient WGD or from independent segmental duplication events.**
+
+###Task 4: Whole Genome Duplications and the Ks plot
+
+Whole genome duplications have received considerable attention in the current era of whole genome assembly. With genome assemblies increasingly available for representative species for even the most under-studied clades in the tree-of-life, new WGDs are discovered regularly that are sometimes shared between species groups (due to the WGDs being ancient) or unique to a newly studied clade.
+
+Ks plots provide a simple means to detect WGD events and estimate their age assuming a molecular clock. Here you will compare Ks plots in intra-species analysis of aligned collinear genes within the same genome of each of the Arabidopsis species.
+
+Review the `self.kaks` file from the Google Drive. This file was generated by `add_ka_and_ks_to_collinearity_Yn00.pl` and is available in the 6species analysis provided by Wang et al. on Zenodo and is referenced in the supplement of the Nature Protocols paper. If you download the full analysis, this file is located in `6species/self.kaks`. Ka and Ks are measures of the rates of nonsynonymous and synonymous substitution in protein coding genes that consider separately mutations that alter the amino acid and those that don't. There are many ways to estimate Ka and Ks from CDS alignments, but the measure implemented in MCScanX is based on a counting method described by Yang and Nielsen (2000) and implemented in Phylogenetic Analysis by Maximum Likelihood (PAML, <https://doi.org/10.1093/molbev/msm088>). See the pre-recorded videos for a related, but somewhat simpler, method introduced by Nei and Gojobori.
+
+Your instructor has written the following code to amke a Ks plot from anchor genes in collinear blocks from within the same genome. If your .Rmd is in the same directory as `self.kaks`, then you can proceed without modifying the path to the file. You may wish to rerun this block multiple times and change the number of bins in `geom_histogram( )` for different visualizations of the Ks plot.
+
+```{r}
+path_to_self_kaks <- '~/Documents/Population Genetics and Evolutionary Biology for Bioinformatics/self.kaks'
+kaks <- read.csv(path_to_self_kaks, sep = "\t", skip = 0, header = FALSE, comment.char = "#", check.names = FALSE)
+
+get_spp_kaks <- function(sp1_prefix,sp2_prefix,spp){
+  sp_prefix_len=nchar(sp1_prefix)
+  sel_kaks=kaks[substr(kaks$V2,0,sp_prefix_len)==sp1_prefix & substr(kaks$V3,0,sp_prefix_len)==sp2_prefix & kaks$V6>0 & kaks$V6<8,]
+  sel_kaks %>%
+    mutate(spp = spp) %>%
+    as_tibble()
+}
+
+# Append the species name to the kaks data
+as.tbl_df <- get_spp_kaks(sp1_prefix="KAG",sp2_prefix="KAG",spp='Asuecica')
+aa.tbl_df <- get_spp_kaks(sp1_prefix="CAE",sp2_prefix="CAE",spp='Aarenosa')
+at.tbl_df <- get_spp_kaks(sp1_prefix="NP",sp2_prefix="NP",spp='Athaliana')
+
+# Plot histogram using facetting for ease of comparison (x-axis the same for all three genome Ks plot)
+bind_rows(as.tbl_df,aa.tbl_df,at.tbl_df) %>%
+  filter(V6 < 5) %>%
+  ggplot(aes(x = V6)) +
+  geom_histogram(bins = 75,fill='white',col="dark green") +
+  facet_wrap( ~ spp,ncol=1,scales='free_y')
+```
+
+**Q3.1.** How many whole genome duplications do you think characteracterizes each species. Explain your answer (3 points)? 
+
+**The Ks plots show that A. thaliana has one clearly detectable whole-genome duplication, represented by a strong peak around Ks ≈ 0.8–1.0 that corresponds to the well-known At-α WGD. In contrast, both A. arenosa and A. suecica show an additional very recent duplication peak at low Ks, reflecting their polyploid origins (autotetraploidy in A. arenosa and allopolyploidy in A. suecica). Thus, each of these two species shows evidence of two WGDs: the ancient At-α event plus a recent genome duplication. The differences in peak patterns reflect their different polyploid histories.**
+
+**Q3.2** Which species do you believe has the most recent and which has the oldest whole genome duplication (1 point)?
+
+**Arabidopsis suecica has the most recent whole-genome duplication, shown by the very strong Ks peak near zero (indicating extremely recent duplication associated with its allopolyploid origin). Arabidopsis thaliana has the oldest detectable whole-genome duplication, because its only major Ks peak occurs at a higher Ks value (~0.8–1.0), representing the ancient At-α duplication with no more recent WGD signal.**
+
+**Q3.3** Do you believe that any WGDs are shared between species (because they occurred in a common ancestor. Explain your answer (1 point)?
+
+**Yes. A. arenosa and A. thaliana clearly share an older whole-genome duplication because both species show a prominent Ks peak at approximately the same higher Ks value (~0.8–1.0). A shared Ks peak indicates that the duplicated gene pairs originated before the species split, meaning this WGD occurred in their common ancestor. In contrast, A. suecica has an additional very recent Ks peak near zero that is not shared, reflecting its unique, recent allopolyploid origin.**
+
+### Task 5: Dot plot visualization of Arabidopsis species genomes 
+
+SynVisio is a third party tool for generating macrosynteny visualizations that was developed to natively read MCScanX outputs. The dot plots were generated using between-species collinearity analysis between A. thaliana (at) vs. A. suecica (as) and A. aeronosa (aa) vs. A. suecica (as). Your instructor visited the SynVisio page <https://synvisio.github.io/#/upload> and uploaded `master.collinearity` and `master.gff` files available from running the MCScanX workflow on these pairs of species (also performed by your instructor).
+
+The SynVisio dot plots `at_as_dot.png`  and `aa_as_dot.png` are available at the Google Drive (see above).
+
+Tetraploids can form as a result of whole genome duplication (WGD) associated with spontaneous WGD within a diploid species (autotetraploidy) or as a result of hybridization between two diploid species (allotetraploidy).
+
+**Q4.1** Which species has a WGD relative to the other species (1 point)?
+
+**Answer: Arabidopsis suecica**
+
+
+**Q4.2** Provide an explanation for why in each dot plot there is one set of chromosomes that is highly syntenic between the two species being compared, and a second set of chromosomes that shows various types of chromosomal rearrangement. (2 points)?
+
+**In each dot plot, one set of chromosomes shows strong, clean synteny because that portion of the A. suecica genome comes directly from the same diploid parent being compared (either A. thaliana or A. arenosa). These chromosomes retain nearly the same structure as their parental genome, so they align in long, continuous diagonal blocks. The second set of chromosomes shows fragmented, rearranged, or noisy synteny because it comes from the other diploid parent—the one not represented in the comparison. Since A. thaliana and A. arenosa are evolutionarily diverged, their chromosomes differ by many structural changes (inversions, translocations, fusions, etc.). When a chromosome from one parent is compared against the “wrong” parent’s genome, the result is scattered, discontinuous synteny rather than clean blocks. Thus, the two patterns reflect the allotetraploid origin of A. suecica: one chromosome set closely matches the compared species, while the other represents the diverged genome of the second parental species.**
+
+**You are finished. See the Completing Your Assignment Section above to submit your answers as a knitted file**
+
