@@ -1,0 +1,294 @@
+---
+title: "HW3"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-09-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# Load data
+```{r}
+df <- read.csv("~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets/weight-height.csv",
+               stringsAsFactors = FALSE)
+```
+
+
+# Normalize column names
+```{r}
+names(df) <- tolower(names(df))
+if (!all(c("gender","height","weight") %in% names(df))) {
+  stop("Expected columns 'Gender', 'Height', 'Weight' (any case).")
+}
+```
+
+
+# Convenience subsets
+```{r}
+h  <- df$height
+w  <- df$weight
+hm <- df$height[df$gender == "Male"]
+hf <- df$height[df$gender == "Female"]
+wm <- df$weight[df$gender == "Male"]
+wf <- df$weight[df$gender == "Female"]
+```
+
+## Helper: pretty density range union
+```{r}
+dens_ylim <- function(...) {
+  ds <- list(...)
+  rng <- range(sapply(ds, function(d) max(d$y, na.rm = TRUE)), na.rm = TRUE)
+  c(0, rng[2] * 1.05)
+}
+```
+
+
+## 1) Heights — four approaches
+
+#A) Round to integer + table + barplot
+
+```{r}
+rounded_h <- as.integer(round(h, 0))
+tab_h     <- table(rounded_h)
+barplot(tab_h, main="Height distribution (rounded to nearest inch)",
+        xlab="Height (inches, integer)", ylab="Count", border=NA)
+```
+
+#B) Histogram (counts)
+```{r}
+hist(h, breaks=30, main="Height distribution (hist)", xlab="Height (inches)")
+```
+
+
+#C) Kernel density
+```{r}
+d_all_h <- density(h, na.rm=TRUE)
+plot(d_all_h, main="Height distribution (kernel density)", xlab="Height (inches)")
+```
+
+#D) Manual binning with cut()
+```{r}
+bins_h <- seq(floor(min(h)), ceiling(max(h)), by=1)  # 1-inch bins
+binned_h <- cut(h, breaks=bins_h, right=FALSE, include.lowest=TRUE)
+counts_h <- as.numeric(table(binned_h))
+mids_h   <- head(bins_h, -1) + 0.5
+plot(mids_h, counts_h, type="h", lwd=6,
+     main="Height distribution (manual 1-inch bins)", xlab="Height (inches)", ylab="Count")
+```
+# 4) Heights — overlay Male (black), Female (red), Total (blue). Use densities so they share a scale
+```{r}
+d_m_h <- density(hm, na.rm=TRUE)
+d_f_h <- density(hf, na.rm=TRUE)
+d_t_h <- density(h , na.rm=TRUE)
+```
+
+```{r}
+yl_h <- dens_ylim(d_m_h, d_f_h, d_t_h)
+plot(d_t_h, col="blue", lwd=2, ylim=yl_h, xlab="Height (inches)",
+     main="Height densities: Male (black), Female (red), Total (blue)")
+lines(d_m_h, col="black", lwd=2)
+lines(d_f_h, col="red",   lwd=2)
+legend("topright", legend=c("Total","Male","Female"),
+       col=c("blue","black","red"), lwd=2, bty="n")
+```
+# 5) Repeat everything for WEIGHT
+ 
+ 
+#A) Round to integer + table + barplot
+
+```{r}
+rounded_w <- as.integer(round(w, 0))
+tab_w     <- table(rounded_w)
+barplot(tab_w, main="Weight distribution (rounded to nearest lb)",
+        xlab="Weight (lb, integer)", ylab="Count", border=NA)
+```
+
+# B) Histogram
+```{r}
+hist(w, breaks=30, main="Weight distribution (hist)", xlab="Weight (lb)")
+```
+
+#C) Kernel density
+```{r}
+d_all_w <- density(w, na.rm=TRUE)
+plot(d_all_w, main="Weight distribution (kernel density)", xlab="Weight (lb)")
+```
+
+#D) Manual binning with cut()
+```{r}
+bins_w <- seq(floor(min(w)), ceiling(max(w)), by=2)  # 2-lb bins (adjust as desired)
+binned_w <- cut(w, breaks=bins_w, right=FALSE, include.lowest=TRUE)
+counts_w <- as.numeric(table(binned_w))
+mids_w   <- head(bins_w, -1) + diff(bins_w)[1]/2
+plot(mids_w, counts_w, type="h", lwd=6,
+     main="Weight distribution (manual 2-lb bins)", xlab="Weight (lb)", ylab="Count")
+```
+
+
+# Overlay Male/Female/Total for weight
+```{r}
+d_m_w <- density(wm, na.rm=TRUE)
+d_f_w <- density(wf, na.rm=TRUE)
+d_t_w <- density(w , na.rm=TRUE)
+yl_w <- dens_ylim(d_m_w, d_f_w, d_t_w)
+plot(d_t_w, col="blue", lwd=2, ylim=yl_w, xlab="Weight (lb)",
+     main="Weight densities: Male (black), Female (red), Total (blue)")
+lines(d_m_w, col="black", lwd=2)
+lines(d_f_w, col="red",   lwd=2)
+legend("topright", legend=c("Total","Male","Female"),
+       col=c("blue","black","red"), lwd=2, bty="n")
+```
+#Visualizing normality
+```{r}
+overlay_norm <- function(x, main, xlab) {
+  d <- density(x); m <- mean(x, na.rm=TRUE); s <- sd(x, na.rm=TRUE)
+  plot(d, main=main, xlab=xlab, lwd=2)
+  xs <- seq(min(d$x), max(d$x), length.out=400)
+  lines(xs, dnorm(xs, mean=m, sd=s), lty=2)
+  legend("topright", legend=c("Kernel density","Normal(mean, sd)"), lwd=c(2,1), lty=c(1,2), bty="n")
+}
+par(mfrow=c(2,3))
+overlay_norm(h , "Height: Total", "Height (in)")
+overlay_norm(hm, "Height: Male" , "Height (in)")
+overlay_norm(hf, "Height: Female", "Height (in)")
+overlay_norm(w , "Weight: Total", "Weight (lb)")
+overlay_norm(wm, "Weight: Male" , "Weight (lb)")
+overlay_norm(wf, "Weight: Female", "Weight (lb)")
+par(mfrow=c(1,1))
+```
+
+#1) Plot the distribution of heights in the group. Is the distribution Gaussian?
+#Answer: No, the overall height distribution for the whole group is not Gaussian. It shows a bimodal shape.
+
+#2)If the distribution is not Gaussian, what can you guess from the shape in terms of underlying subgroups?
+#Answer: The two peaks reflect underlying subgroups—specifically Male and Female participants—who have different mean heights. Each sex has its own bell-shaped distribution and when combined, the mixture looks non-Gaussian/bimodal.
+
+#3)If the distribution is Gaussian, does it mean there are no subgroups?
+#Answer: No, different subgroups can overlap enough to produce an overall curve that still looks approximately normal.
+
+#4)Plot the distribution of heights of men (black) and women (red) on the same graph, and the whole group (blue). Are the “Male” and “Female” distributions Gaussian? The total is the sum of Male and Female distributions. Do you see why it is not Gaussian?
+#Answer: Yes, because Male and Female height distributions are each approximately Gaussian (roughly symmetric bell shapes with different means/SDs).The total is a mixture of those two appears bimodal as stated in question 1.
+
+#5) Repeat 1–4 with weight instead of height. Are the weight distributions Gaussian?
+#Answer: For weight, the overall distribution is not Gaussian; again it’s a mixture of two subgroups (Male and Female) with different means. Within each sex, however, the weight distributions in this dataset are reasonably close to Gaussian. 
+
+##Correlations
+
+
+#6) Height vs Weight: All Individuals
+```{r}
+plot(df$height, df$weight,
+     xlab="Height (inches)", ylab="Weight (lbs)",
+     main="Height vs Weight - All Individuals",
+     col="blue", pch=16, cex=0.5)
+```
+
+#7) Height vs Weight by Gender
+
+```{r}
+## =========================
+plot(df$height[df$gender=="Male"], df$weight[df$gender=="Male"],
+     xlab="Height (inches)", ylab="Weight (lbs)",
+     main="Height vs Weight by Gender",
+     col="black", pch=16, cex=0.5, xlim=range(df$height), ylim=range(df$weight))
+points(df$height[df$gender=="Female"], df$weight[df$gender=="Female"],
+       col="red", pch=16, cex=0.5)
+legend("topleft", legend=c("Male","Female"), col=c("black","red"), pch=16, bty="n")
+```
+
+#8) Correlations
+
+```{r}
+cor_all <- cor(df$height, df$weight)
+cor_m   <- cor(df$height[df$gender=="Male"], df$weight[df$gender=="Male"])
+cor_f   <- cor(df$height[df$gender=="Female"], df$weight[df$gender=="Female"])
+
+cat("Correlation (all):", cor_all, "\n")
+cat("Correlation (Male):", cor_m, "\n")
+cat("Correlation (Female):", cor_f, "\n")
+```
+
+#Correlation (all): 0.9247563 
+#Correlation (Male): 0.8629788 
+#Correlation (Female): 0.8496086 
+
+#9) Iris dataset exploratio
+
+```{r}
+library(reshape2)
+```
+
+#a) Two interesting plots
+```{r}
+plot(iris$Sepal.Length, iris$Petal.Length,
+     col=iris$Species, pch=16,
+     xlab="Sepal Length", ylab="Petal Length",
+     main="Sepal vs Petal Length by Species")
+legend("topleft", legend=levels(iris$Species),
+       col=1:3, pch=16, bty="n")
+
+boxplot(Sepal.Width ~ Species, data=iris,
+        main="Sepal Width by Species", ylab="Sepal Width")
+```
+# b) Multiple panels with reshape2
+```{r}
+iris_m <- melt(iris, id.vars="Species")
+library(ggplot2)
+ggplot(iris_m, aes(x=Species, y=value, fill=Species)) +
+  geom_boxplot() +
+  facet_wrap(~variable, scales="free_y") +
+  theme_bw() +
+  ggtitle("Iris measurements by Species across multiple panels")
+```
+
+#6) plot height (x-axis) versus weight (y-axis) for the group (each point is a person on this graph)
+
+#The scatterplot shows a strong positive linear relationship: taller individuals generally weigh more. Correlation coefficient (all individuals) is 0.92 which is close to 1, so it is very strong.
+
+#7) Plot height vs weight by gender
+
+# Both Male (black) and Female (red) groups show positive linear relationships, but with different intercepts/slopes.
+
+#8a) Is height a good proxy for weight?
+#Answer: Yes, height is a strong predictor of weight overall (r ≈ 0.92). However, gender differences matter: for the same height, men weigh more on average.
+
+#8b) Is the rate of increase in weight with height higher for men or women? 
+#Answer: Men. The slope is steeper for men. Men gain more weight per inch of height compared to women.
+
+#8c) For which group is height a better proxy for weight?
+#Answer: Based on correlation values: Men (r ≈ 0.86) slightly better than women (r ≈ 0.85), though both are strong. However, the combined group correlation is higher (~0.92) because combining increases range of both variables, boosting the correlation.
+
+#8d) Would binning the data on height and weight and using a 3D plot give a better picture?
+#Answer: Yes. Binning height and weight into ranges and showing counts in a 3D histogram or heatmap would reveal density “clusters” (Male vs Female groups). It makes subgroup separation and overlap clearer.
+
+#9a) Two interesting plots from the iris dataset:
+#Answer: Sepal Length vs Petal Length scatterplot colored by species → shows clear separation, especially Setosa vs the others. Also, boxplot of Sepal Width by Species → highlights species-level differences in central tendency and spread.
+
+
+
+
+
+
