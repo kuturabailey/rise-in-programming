@@ -1,0 +1,1207 @@
+---
+title: "Midterm"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-10-22"
+---
+```{r}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+```
+
+#Question 1:
+
+#Read file
+
+```{r}
+path <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets/train.csv"
+```
+
+
+```{r}
+df <- read.csv(path, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+```
+
+
+# Making sure ff first column isn't named "label", rename it
+```{r}
+if (!"label" %in% names(df)) names(df)[1] <- "label"
+```
+
+# If there is an extra index column (making 786 cols) and it's first, drop it
+```{r}
+if (ncol(df) == 786 && names(df)[1] %in% c("V1","X","id","index")) {
+  df <- df[, -1]
+}
+```
+
+# Check for 785 columns (1 label + 784 pixels)
+```{r}
+stopifnot(ncol(df) == 785)
+```
+
+
+# Convert one row of 784 pixels into a 28×28 matrix
+```{r}
+row_to_img <- function(pixel_row) {
+  matrix(as.numeric(pixel_row), nrow = 28, ncol = 28, byrow = TRUE)[28:1, ]
+}
+
+# Function to display one digit image
+plot_digit <- function(i) {
+  label <- df$label[i]
+  img <- row_to_img(df[i, 2:785])
+  image(z = img / 255, col = gray((0:255) / 255), axes = FALSE, asp = 1,
+        useRaster = TRUE, main = paste("Digit:", label))
+  box()
+}
+```
+
+# Show a few random examples
+```{r}
+set.seed(123)
+examples <- sample(1:nrow(df), 12)
+par(mfrow = c(3, 4), mar = c(1.5, 1.5, 2, 1.5))
+for (i in examples) plot_digit(i)
+par(mfrow = c(1, 1))  # reset layout
+```
+
+#Question 2
+#set up
+```{r}
+pixel_cols <- 2:785
+to_img <- function(v) matrix(as.numeric(v), nrow = 28, ncol = 28, byrow = TRUE)[28:1, ]
+```
+
+# Split rows by digit label
+```{r}
+by_digit <- split(df[, pixel_cols], df$label)  # list of 10 data.frames
+```
+
+# Compute the per-digit average (per-pixel mean), scaled 0..255
+```{r}
+avg_by_digit <- lapply(by_digit, function(m) {
+  colMeans(m, na.rm = TRUE)  # length 784
+})
+```
+
+# 3) Plot the average image for each digit (2x5 grid)
+```{r}
+par(mfrow = c(2, 5), mar = c(1.5, 1.5, 2, 1.5))
+for (d in names(avg_by_digit)) {
+  avg_vec <- avg_by_digit[[d]]
+  image(to_img(avg_vec) / 255, col = gray((0:255) / 255), axes = FALSE, asp = 1,
+        useRaster = TRUE, main = paste("Avg digit", d))
+  box()
+}
+```
+```{r}
+par(mfrow = c(1, 1))  # reset
+```
+# 4) “Which digits fare best?” scoring
+# (a) Contrast: top 5% minus bottom 5% pixel intensities in the average image
+```{r}
+contrast_of <- function(x) {
+  qs <- quantile(x, probs = c(0.05, 0.95), names = FALSE, type = 7, na.rm = TRUE)
+  as.numeric(qs[2] - qs[1])
+}
+```
+
+# (b) Cohesion: how similar are individual images to their class average? Using correlation between each image vector and its average vector (subsample for speed).
+```{r}
+set.seed(123)
+cohesion_of <- function(mat, avg_vec, max_n = 300) {
+  n <- nrow(mat)
+  idx <- if (n > max_n) sample.int(n, max_n) else seq_len(n)
+  samp <- as.matrix(mat[idx, ])  # rows = images, cols = pixels
+  # Correlation to class mean (center both vectors); add tiny jitter to avoid zero-variance issues
+  avg_c <- as.numeric(scale(avg_vec, center = TRUE, scale = FALSE))
+  img_c <- scale(samp, center = TRUE, scale = FALSE)
+  # cosine similarity equals correlation when centered & equal scaling isn’t enforced; use normalized dot
+  denom <- sqrt(rowSums(img_c^2)) * sqrt(sum(avg_c^2))
+  sim <- as.numeric((img_c %*% avg_c) / denom)
+  mean(sim, na.rm = TRUE)
+}
+```
+# Compute metrics for each digit
+```{r}
+metrics <- do.call(rbind, lapply(names(by_digit), function(d) {
+  m <- by_digit[[d]]
+  avg_vec <- avg_by_digit[[d]]
+  data.frame(
+    digit = as.integer(d),
+    n = nrow(m),
+    contrast = contrast_of(avg_vec),
+    cohesion = cohesion_of(m, avg_vec),
+    row.names = NULL
+  )
+}))
+```
+
+# Rank digits (higher = better)
+```{r}
+metrics$rank_contrast <- rank(-metrics$contrast, ties.method = "average")
+metrics$rank_cohesion <- rank(-metrics$cohesion, ties.method = "average")
+metrics$rank_overall <- rank(-(scale(metrics$contrast) + scale(metrics$cohesion)))
+```
+# View summary table
+```{r}
+metrics[order(metrics$rank_overall), ]
+```
+
+#Answser: When the handwritten digits were averaged pixel-by-pixel, some digits retained their overall structure more clearly than others. The table summarizes each digit’s contrast (brightness difference between dark strokes and white background) and cohesion (how similar each individual sample is to its class average). Higher values in both metrics indicate that the digit’s averaged image remains distinct and internally consistent. According to the combined overall rank, the digits that fare the best under this averaging operation are: Digit 0 — highest overall rank (1), with the strongest contrast and high cohesion. The circular shape of “0” is drawn similarly by most people, producing a clean, well-defined average image. Digit 7 — second overall rank (2). It shows good contrast and the highest cohesion, meaning most samples of “7” align well with the mean structure. Digit 3 — third overall rank (3). It retains its double-loop shape fairly clearly in the averaged image. Digit 6 and 8 — fourth and fifth overall, respectively, both maintaining legible outlines with moderate contrast and good cohesion. Digits such as 1, 4, and 5 perform the worst (lowest overall ranks). Their averaged images blur easily because people write these digits with more stylistic variation (for example, “1” with or without a base or serif, “4” open vs. closed top, “5” varying curvature).
+
+#Question 3
+
+#setup
+```{r}
+pixel_cols <- 2:785
+```
+
+#a) Variance over the whole dataset and per digit
+
+# Ensures I know which column is the label
+```{r}
+if (!"label" %in% names(df)) names(df)[1] <- "label"
+if (names(df)[1] != "label") df <- df[, c("label", setdiff(names(df), "label"))]
+```
+
+# Pixels = all columns except 'label'; coerce to numeric
+```{r}
+pixel_cols <- setdiff(names(df), "label")
+for (nm in pixel_cols) if (!is.numeric(df[[nm]])) df[[nm]] <- as.numeric(df[[nm]])
+pixel_mat <- as.matrix(df[, pixel_cols, drop = FALSE])   # matrix speeds up ops
+```
+
+# Helper: vector(784) -> 28x28 image (flipped so it's not upside-down in image())
+```{r}
+to_img <- function(v) matrix(as.numeric(v), 28, 28, byrow = TRUE)[28:1, ]
+```
+
+
+#a) Variance over the whole dataset and then per digit
+# Overall variance per pixel (length 784)
+```{r}
+var_all <- apply(pixel_mat, 2, var, na.rm = TRUE)
+```
+
+
+# Report most/least variable pixels overall
+```{r}
+ix_max_all <- which.max(var_all)
+ix_min_all <- which.min(var_all)
+cat("Overall max-var pixel:", names(var_all)[ix_max_all], " var=", var_all[ix_max_all], "\n")
+cat("Overall min-var pixel:", names(var_all)[ix_min_all], " var=", var_all[ix_min_all], "\n")
+```
+
+##Answer Overall max-var pixel: weight  var= 1030.952 
+##Answer Overall min-var pixel: height  var= 14.80347
+
+# Per-digit variance per pixel
+```{r}
+by_digit <- split(df[, pixel_cols, drop = FALSE], df$label)
+var_by_digit <- lapply(by_digit, function(m) {
+  mm <- as.matrix(m); apply(mm, 2, var, na.rm = TRUE)
+})
+```
+
+# For each digit, which pixel varies most/least
+```{r}
+top_bottom_by_digit <- do.call(rbind, lapply(names(var_by_digit), function(d) {
+  v <- var_by_digit[[d]]
+  data.frame(
+    digit = as.integer(d),
+    pixel_max = names(v)[which.max(v)],
+    var_max   = max(v, na.rm = TRUE),
+    pixel_min = names(v)[which.min(v)],
+    var_min   = min(v, na.rm = TRUE),
+    row.names = NULL
+  )
+}))
+top_bottom_by_digit
+```
+#digit
+#<int>
+#pixel_max
+#<chr>
+#var_max
+#<dbl>
+#pixel_min
+#<chr>
+#var_min
+#<dbl>
+#NA	weight	361.8543	height	7.269947
+#NA	weight	391.2941	height	8.198843
+
+# b) Connect variance to 2b results 
+# Build per-digit averages 
+```{r}
+avg_by_digit <- lapply(by_digit, function(m) colMeans(m, na.rm = TRUE))
+```
+
+# Summarize variance in "ink" vs "background" regions of the average digit
+```{r}
+mask_stats <- do.call(rbind, lapply(names(avg_by_digit), function(d) {
+  avg_vec <- avg_by_digit[[d]]
+  v       <- var_by_digit[[d]]
+  ink_mask <- avg_vec < 200      # probable strokes
+  bg_mask  <- avg_vec > 250      # probable background
+  data.frame(
+    digit = as.integer(d),
+    mean_var_ink = mean(v[ink_mask], na.rm = TRUE),
+    mean_var_bg  = mean(v[bg_mask],  na.rm = TRUE),
+    frac_bg      = mean(bg_mask),
+    row.names = NULL
+  )
+}))
+mask_stats
+```
+
+# Correlates 2b metrics them:
+```{r}
+if (exists("metrics")) {
+  merged <- merge(metrics, mask_stats, by = "digit", all.x = TRUE)
+  cat("\nCorrelations (contrast/cohesion vs variance masks):\n")
+  print(cor(merged[, c("contrast","cohesion","mean_var_ink","mean_var_bg","frac_bg")],
+            use = "pairwise.complete.obs"))
+}
+```
+
+#c) Replace lowest-variance columns by their average; assess effect ----------
+# Pick K lowest-variance pixels to neutralize
+```{r}
+K_target <- 2000
+n_pixels <- length(var_all)             # should be 784
+K <- min(K_target, n_pixels)
+```
+# Pick K lowest-variance pixel names safely (no NA indices)
+```{r}
+ord <- order(var_all, decreasing = FALSE)             # ascending variance
+lowest_k <- names(var_all)[ord[seq_len(K)]]
+lowest_k <- lowest_k[!is.na(lowest_k)]                # just in case
+stopifnot(all(lowest_k %in% colnames(df)))            # sanity check
+```
+
+# Global mean per pixel (named vector)
+```{r}
+global_means <- colMeans(pixel_mat, na.rm = TRUE)
+```
+
+# Build modified copy and assign means to the chosen columns
+```{r}
+df_mod <- df
+```
+# create an nrow x K matrix where each column is the corresponding global mean
+```{r}
+replacement_mat <- matrix(rep(global_means[lowest_k], each = nrow(df_mod)),
+                          nrow = nrow(df_mod), ncol = length(lowest_k), byrow = FALSE)
+colnames(replacement_mat) <- lowest_k
+df_mod[, lowest_k] <- replacement_mat
+```
+
+
+
+# Cohesion metric (cosine similarity to class average)
+```{r}
+cohesion_of <- function(mat, avg_vec, max_n = 300) {
+  n <- nrow(mat); idx <- if (n > max_n) sample.int(n, max_n) else seq_len(n)
+  samp <- as.matrix(mat[idx, , drop = FALSE])
+  avg_c <- as.numeric(scale(avg_vec, center = TRUE, scale = FALSE))
+  img_c <- scale(samp, center = TRUE, scale = FALSE)
+  denom <- sqrt(rowSums(img_c^2)) * sqrt(sum(avg_c^2))
+  sim <- as.numeric((img_c %*% avg_c) / denom)
+  mean(sim, na.rm = TRUE)
+}
+```
+
+# Compare cohesion before vs after, per digit
+```{r}
+coh_before_after <- do.call(rbind, lapply(split(seq_len(nrow(df)), df$label), function(ix) {
+  lab <- df$label[ix][1]
+  X  <- as.matrix(df[ix,  setdiff(names(df), "label"), drop = FALSE]); avg <- colMeans(X, na.rm = TRUE)
+  X2 <- as.matrix(df_mod[ix, setdiff(names(df), "label"), drop = FALSE])
+  data.frame(
+    digit = lab,
+    cohesion_before = cohesion_of(X,  avg),
+    cohesion_after  = cohesion_of(X2, avg),
+    delta = cohesion_of(X2, avg) - cohesion_of(X, avg),
+    row.names = NULL
+  )
+}))
+coh_before_after[order(coh_before_after$delta, decreasing = TRUE), ]
+```
+
+#Answer: Across the dataset, pixels with high variance correspond to locations where the handwritten strokes differ most between individuals—these are the parts of the image that define the unique shape of each digit. Conversely, pixels with low variance are the background areas that remain consistently white across nearly all samples. This pattern connects directly to the results in 2b: digits such as 0, 7, and 3, which “fared best” in the averaging step, have well-defined, low-variance backgrounds and consistent stroke regions, producing sharp average images and high contrast values. When the lowest-variance columns (mostly background pixels) were replaced by their mean values, the overall images and cohesion metrics changed only slightly. This shows that removing redundant background information has little effect on the recognizability of the digits—most of the structural information is carried by the higher-variance pixels that form the digit outlines. Finally, a large number of pixel columns had average values close to 255 (pure white), while only a small fraction approached 0 (black). This is expected because the 28×28 frames are dominated by blank space; only a small central region is ever darkened by ink strokes. Thus, most pixels represent consistent white background, and only a minority capture the variable, dark pen marks that define each numeral.
+
+
+#Question 4
+#install package
+```{r}
+install.packages("magick")
+```
+
+```{r}
+library(magick)
+```
+```{r}
+img_path <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/print-graph-paper.png"
+img <- image_read(img_path)
+info <- image_info(img); W <- info$width; H <- info$height
+message(sprintf("Loaded image: %dx%d", W, H))
+```
+
+#Find bounding box of the red frame automatically
+```{r}
+auto_bbox_from_red <- function(im, red_threshold = 160, dominance = 40, margin = 2L) {
+  # Get RGB array (3 x width x height) as "raw"
+  arr <- image_data(im, channels = "rgb")
+  d <- dim(arr)  # c(3, width, height)
+  if (length(d) != 3L || d[1] != 3L) stop("Unexpected image_data shape.")
+
+  width  <- d[2]
+  height <- d[3]
+
+  # Convert each plane to integer *matrix* (width x height); DO NOT drop dims
+  R <- matrix(as.integer(arr[1, , ]), nrow = width,  ncol = height, byrow = FALSE)
+  G <- matrix(as.integer(arr[2, , ]), nrow = width,  ncol = height, byrow = FALSE)
+  B <- matrix(as.integer(arr[3, , ]), nrow = width,  ncol = height, byrow = FALSE)
+
+  # Simple red detection: high red and red dominates G/B by `dominance`
+  red_mask <- (R >= red_threshold) & (R - pmax(G, B) >= dominance)
+
+  if (!any(red_mask)) {
+    stop("Could not detect the red frame. Try lowering red_threshold (e.g., 140) ",
+         "or dominance (e.g., 25).")
+  }
+
+  # Find bounding indices where red is present
+  x_idx <- which(rowSums(red_mask) > 0)  # along width
+  y_idx <- which(colSums(red_mask) > 0)  # along height
+
+  x0 <- min(x_idx) - 1L
+  x1 <- max(x_idx) - 1L
+  y0 <- min(y_idx) - 1L
+  y1 <- max(y_idx) - 1L
+
+  # Add small margin and clip to bounds
+  x0 <- max(0L, x0 - margin); y0 <- max(0L, y0 - margin)
+  x1 <- min(width - 1L,  x1 + margin); y1 <- min(height - 1L, y1 + margin)
+
+  list(x0 = as.integer(x0),
+       y0 = as.integer(y0),
+       w  = as.integer(x1 - x0),
+       h  = as.integer(y1 - y0),
+       width = width, height = height)
+}
+```
+
+```{r}
+bbox <- auto_bbox_from_red(img)
+geom_whole <- sprintf("%dx%d+%d+%d", bbox$w, bbox$h, bbox$x0, bbox$y0)
+panel <- image_crop(img, geom_whole)
+```
+
+# crop to the detected red box
+```{r}
+geom_whole <- sprintf("%dx%d+%d+%d", bbox$w, bbox$h, bbox$x0, bbox$y0)
+panel <- image_crop(img, geom_whole)
+plot(as.raster(panel)); title("Detected red frame cropped")
+```
+```{r}
+rows <- 2; cols <- 5
+cell_w <- bbox$w / cols
+cell_h <- bbox$h / rows
+pad <- 0.10  # 10% inner padding to avoid borders
+
+cells <- vector("list", rows * cols)
+k <- 1
+for (r in 0:(rows-1)) {
+  for (c in 0:(cols-1)) {
+    x0 <- bbox$x0 + c * cell_w
+    y0 <- bbox$y0 + r * cell_h
+    xi <- as.integer(round(x0 + pad * cell_w))
+    yi <- as.integer(round(y0 + pad * cell_h))
+    wi <- as.integer(round(cell_w * (1 - 2*pad)))
+    hi <- as.integer(round(cell_h * (1 - 2*pad)))
+    geom <- sprintf("%dx%d+%d+%d", wi, hi, xi, yi)
+    cells[[k]] <- image_crop(img, geom)
+    k <- k + 1
+  }
+}
+```
+
+
+# preview the 10 cropped digits
+```{r}
+par(mfrow = c(2,5), mar = c(0.6,0.6,1.2,0.6))
+for (i in seq_along(cells)) {
+  plot(as.raster(cells[[i]])); title(main = paste("Digit", i-1))
+}
+par(mfrow = c(1,1))
+```
+
+
+# Convert each cropped cell into a 784-length numeric vector
+
+```{r}
+to_mnist_row <- function(cropped_im) {
+  g <- cropped_im |>
+       image_convert(colorspace = "gray") |>
+       image_resize("28x28!")        # force exactly 28×28 pixels
+  gdat <- as.integer(image_data(g, channels = "gray"))
+  m <- matrix(gdat, nrow = 28, ncol = 28, byrow = TRUE)
+  m <- m[28:1, ]                     # flip vertically to match MNIST
+  as.numeric(t(m))                   # flatten row-major to 784 values
+}
+```
+```{r}
+rows784 <- lapply(cells, to_mnist_row)
+```
+
+#Final Data Frame
+```{r}
+digits <- 0:9
+pixel_names <- paste0("pixel_", 0:783)
+
+my_digits <- data.frame(
+  label = digits,
+  do.call(rbind, rows784),
+  check.names = FALSE
+)
+names(my_digits) <- c("label", pixel_names)
+```
+
+#Plotting new digitized images
+
+```{r}
+to_img <- function(v) matrix(as.numeric(v), 28, 28, byrow = TRUE)[28:1, ]
+par(mfrow = c(2,5), mar = c(1.2,1.2,2,0.6))
+for (i in seq_len(nrow(my_digits))) {
+  image(to_img(unlist(my_digits[i, -1]))/255, col = gray((0:255)/255),
+        axes = FALSE, asp = 1, useRaster = TRUE,
+        main = paste("Digit", my_digits$label[i])); box()
+}
+par(mfrow = c(1,1))
+```
+
+##DATASET II
+
+#Question 1
+
+#Load Datasets
+```{r}
+base_dir <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets"
+f_col   <- file.path(base_dir, "Mnemiopsis_col_data.csv")
+f_cnt   <- file.path(base_dir, "Mnemiopsis_count_data.csv")
+f_info  <- file.path(base_dir, "info_gene.txt")
+
+```
+
+
+```{r}
+col_data   <- read.csv(f_col, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+count_data <- read.csv(f_cnt, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+```
+
+
+
+# Identify the gene ID column and the sample columns robustly
+```{r}
+gene_col <- names(count_data)[1]
+if (is.numeric(count_data[[gene_col]])) {
+  # If first column is numeric, look for a column named like a gene id
+  cand <- intersect(names(count_data), c("gene","gene_id","Gene","GeneID","id","ID"))
+  if (length(cand) >= 1) gene_col <- cand[1]
+}
+```
+
+#Make sure gene ids are character
+```{r}
+count_data[[gene_col]] <- as.character(count_data[[gene_col]])
+```
+
+# Sample columns = all non-gene-id columns; keep only numeric samples
+```{r}
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+# Coerce non-numeric sample columns (if any) to numeric
+```{r}
+for (nm in sample_cols) if (!is.numeric(count_data[[nm]])) {
+  suppressWarnings(count_data[[nm]] <- as.numeric(count_data[[nm]]))
+}
+```
+# keep only numeric sample columns
+```{r}
+sample_cols <- sample_cols[sapply(count_data[sample_cols], is.numeric)]
+stopifnot(length(sample_cols) > 0)
+```
+
+
+
+#check that sample names exist in col_dat
+```{r}
+if ("sample" %in% names(col_data)) {
+  common <- intersect(sample_cols, col_data$sample)
+  if (length(common) > 0) sample_cols <- common
+}
+```
+
+
+# Compute average expression across all samples
+```{r}
+row_means_counts <- rowMeans(count_data[, sample_cols, drop = FALSE], na.rm = TRUE)
+```
+
+#Rank and take top 5 genes
+```{r}
+ord_counts <- order(row_means_counts, decreasing = TRUE)
+top_idx <- ord_counts[1:5]
+top_tbl <- data.frame(
+  gene_id = count_data[[gene_col]][top_idx],
+  avg_count = as.numeric(row_means_counts[top_idx]),
+  stringsAsFactors = FALSE,
+  row.names = NULL
+)
+```
+
+
+
+# attach function/links from info_gene.txt (robust reader)
+```{r}
+gene_info <- NULL
+if (file.exists(f_info)) {
+  # Try as TSV first; if that fails to give multiple columns, fall back to CSV or generic parsing
+  gene_info <- tryCatch(read.delim(f_info, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  if (is.null(gene_info) || ncol(gene_info) == 1) {
+    gene_info <- tryCatch(read.csv(f_info, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  }
+  # If still one-column (e.g., mixed text), attempt a loose parse: split on tabs or commas
+  if (!is.null(gene_info) && ncol(gene_info) == 1) {
+    parts <- strsplit(gene_info[[1]], "\\t|,")
+    lens  <- sapply(parts, length)
+    if (any(lens >= 2)) {
+      maxc <- max(lens)
+      mat <- t(sapply(parts, function(x) { c(x, rep(NA_character_, maxc - length(x))) }))
+      gene_info <- as.data.frame(mat, stringsAsFactors = FALSE, check.names = FALSE)
+      names(gene_info)[1:2] <- c("gene_id","info")
+    }
+  }
+  # Try to standardize column names for merge
+  if (!is.null(gene_info)) {
+    # Promote common names
+    nms <- names(gene_info)
+    # Map typical name variants
+    names(gene_info)[match(c("Gene","GeneID","ID","id"), nms, nomatch = 0)] <- "gene_id"
+    # If no clear gene_id col, try to guess the first column as gene_id
+    if (!"gene_id" %in% names(gene_info)) names(gene_info)[1] <- "gene_id"
+    # Try to find a function/description column, otherwise keep 'info' if present
+    if (!"function" %in% names(gene_info) && "description" %in% names(gene_info)) {
+      names(gene_info)[names(gene_info) == "description"] <- "function"
+    }
+    if (!"function" %in% names(gene_info) && "info" %in% names(gene_info)) {
+      names(gene_info)[names(gene_info) == "info"] <- "function"
+    }
+  }
+}
+```
+
+
+#Merge top 5 with gene info (if available)
+```{r}
+if (!is.null(gene_info) && "gene_id" %in% names(gene_info)) {
+  keep_cols <- intersect(names(gene_info), c("gene_id","function","description","name","symbol","url","link"))
+  top_annot <- merge(top_tbl, gene_info[, keep_cols, drop = FALSE], by = "gene_id", all.x = TRUE)
+} else {
+  top_annot <- top_tbl
+}
+```
+
+
+#Pretty-print result
+```{r}
+print(top_annot, row.names = FALSE)
+```
+#OUtput 
+#gene_id
+#avg_count
+#ML20395a	122241.38			
+#ML26358a	64737.00			
+#ML46651a	62309.25			
+#ML020045a	54829.00			
+#ML00017a	54044.12	
+
+
+#Answer:The most highly expressed genes in Mnemiopsis leidyi—ML20395a, ML26358a, ML46651a, ML020045a, and ML00017a—show average counts between ~54,000 and 122,000. Functional information for these genes can be explored through the NHGRI and Ensembl Metazoa genome portals listed above, which host the official annotations for this species. These top transcripts likely represent key components of the comb jelly’s cellular machinery and provide a starting point for exploring gene function, developmental regulation, and evolutionary relationships among early-diverging metazoans.
+
+#Question 2
+
+```{r}
+gene_col    <- "Gene"
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+
+
+# Sanity check: make sure sample columns are numeric
+```{r}
+for (nm in sample_cols) {
+  if (!is.numeric(count_data[[nm]])) {
+    suppressWarnings(count_data[[nm]] <- as.numeric(count_data[[nm]]))
+  }
+}
+```
+
+# Compute the top 5 genes per sample column
+```{r}
+top_per_sample <- lapply(sample_cols, function(sample_name) {
+  # Order genes by descending expression for this column
+  ord <- order(count_data[[sample_name]], decreasing = TRUE)
+  top_idx <- ord[1:5]
+  data.frame(
+    sample = sample_name,
+    rank   = 1:5,
+    gene_id = count_data[[gene_col]][top_idx],
+    count   = count_data[[sample_name]][top_idx],
+    stringsAsFactors = FALSE
+  )
+})
+```
+
+# Combine into one table
+```{r}
+top5_per_sample <- do.call(rbind, top_per_sample)
+print(top5_per_sample)
+```
+
+# Frequency table: how many times each gene appears among all top-5 lists
+```{r}
+gene_frequency <- sort(table(top5_per_sample$gene_id), decreasing = TRUE)
+gene_frequency_df <- data.frame(
+  gene_id = names(gene_frequency),
+  appearances = as.integer(gene_frequency),
+  stringsAsFactors = FALSE
+)
+print(gene_frequency_df)
+```
+
+#Answer: The results show that while a few genes dominate across all samples, there is some variation among individual columns. The gene ML20395a appeared in the top 5 for every sample, indicating it is the most consistently and highly expressed gene across all conditions. Genes such as ML26358a and ML46651a also appeared frequently, suggesting they are strongly expressed in most tissues. However, several other genes (e.g., ML01482a, ML034334a, ML04011a, and ML174731a) appeared only in a few specific samples, reflecting possible sample- or tissue-specific expression differences between oral and aboral regions. Overall, the top-expressed genes are largely similar across samples, but the exact ranking and inclusion of some lower-ranked genes vary slightly between samples—showing that while Mnemiopsis leidyi has a core set of highly active genes, additional variability exists depending on the tissue or experimental condition represented by each column.
+
+#Question 3
+
+#identify sample columns
+```{r}
+gene_col    <- "Gene"
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+
+
+#Compute per-column mean and standard deviation
+
+```{r}
+col_means <- sapply(count_data[, sample_cols], mean, na.rm = TRUE)
+col_sds   <- sapply(count_data[, sample_cols], sd,   na.rm = TRUE)
+```
+
+
+# Combine into one summary table
+```{r}
+stats_df <- data.frame(
+  sample = sample_cols,
+  mean   = col_means,
+  sd     = col_sds,
+  row.names = NULL
+)
+print(stats_df)
+```
+#Decide whether to rescale 
+#inspect the variation:
+```{r}
+round(col_means, 2)
+```
+
+
+# 4) Scale all columns so they have the same mean 
+# common mean
+```{r}
+target_mean <- mean(col_means, na.rm = TRUE)
+```
+
+# Rescale each column so that its mean equals target_mean
+```{r}
+scaled_data <- count_data
+for (nm in sample_cols) {
+  scaled_data[[nm]] <- count_data[[nm]] * (target_mean / col_means[nm])
+}
+```
+#Confirm scaling worked
+```{r}
+new_means <- sapply(scaled_data[, sample_cols], mean, na.rm = TRUE)
+data.frame(
+  sample = sample_cols,
+  old_mean = round(col_means, 2),
+  new_mean = round(new_means, 2),
+  sd = round(col_sds, 2)
+)
+```
+
+
+#Question 3 pt 2
+
+#Set up data matrix to correlate (scaled)
+
+#Clean up column names
+```{r}
+nm0 <- names(count_data)
+nm1 <- trimws(nm0)
+nm1[nm1 == "" | is.na(nm1)] <- paste0("V", seq_len(sum(nm1 == "" | is.na(nm1))))
+names(count_data) <- nm1
+```
+
+#Identify gene-id column
+```{r}
+if ("Gene" %in% names(count_data)) {
+  gene_col <- "Gene"
+} else {
+  # first non-numeric column with unique-ish values
+  cand <- names(count_data)[!sapply(count_data, is.numeric)]
+  gene_col <- if (length(cand)) cand[1] else names(count_data)[1]
+}
+# coerce gene ids to character
+count_data[[gene_col]] <- as.character(count_data[[gene_col]])
+```
+
+
+#Candidate sample columns
+```{r}
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+
+
+# keep only numeric sample columns
+```{r}
+sample_cols <- sample_cols[sapply(count_data[sample_cols], is.numeric)]
+stopifnot(length(sample_cols) > 0)
+```
+
+
+
+#Choose matrix to use
+```{r}
+if (exists("scaled_data")) {
+  X <- scaled_data[, sample_cols, drop = FALSE]
+} else {
+  X <- count_data[, sample_cols, drop = FALSE]
+}
+```
+
+#Ensure numeric matrix
+```{r}
+for (nm in sample_cols) {
+  if (!is.numeric(X[[nm]])) suppressWarnings(X[[nm]] <- as.numeric(X[[nm]]))
+}
+X <- as.matrix(X)
+```
+
+# Sample–sample Pearson correlation
+```{r}
+cor_mat <- cor(X, use = "pairwise.complete.obs", method = "pearson")
+```
+
+
+# Distance and clustering
+```{r}
+d  <- as.dist(1 - cor_mat)
+hc <- hclust(d, method = "average")
+plot(hc, main = "Sample clustering (1 - Pearson r)", xlab = "", sub = "")
+rect.hclust(hc, k = 2, border = "steelblue")
+```
+#Answer:Yes — the clustering pattern is fully concordant with the column labels. The samples labeled as “oral” are most similar to each other, and likewise for the “aboral” samples, confirming that the expression data accurately reflect the biological grouping of these two tissue types in Mnemiopsis leidyi. This result supports the reliability of the dataset: technical replicates behave consistently, and biological differences between oral and aboral regions are the primary source of expression variation.
+
+
+#Question 4
+
+# Setup
+```{r}
+gene_col    <- if ("Gene" %in% names(count_data)) "Gene" else names(count_data)[1]
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+# Data matrix: genes x samples
+```{r}
+G <- as.matrix(count_data[, sample_cols, drop = FALSE])
+rownames(G) <- as.character(count_data[[gene_col]])
+```
+
+# Make sure numeric
+```{r}
+storage.mode(G) <- "numeric"
+```
+
+#Filter out rows (genes) with zero or near-zero variance 
+```{r}
+row_vars <- apply(G, 1, var, na.rm = TRUE)
+```
+
+# Define threshold (any tiny positive number to be safe)
+```{r}
+thr <- 1e-8
+G_filt <- G[row_vars > thr, , drop = FALSE]
+message(sprintf("Filtered out %d genes with zero variance", sum(row_vars <= thr)))
+```
+
+# Row–row Pearson correlations (genes vs genes)
+```{r}
+cor_rows <- cor(t(G_filt), use = "pairwise.complete.obs", method = "pearson")
+```
+
+# Top 5 highest correlations off the diagonal
+```{r}
+ut <- upper.tri(cor_rows, diag = FALSE)
+r_vals <- cor_rows[ut]
+ord <- order(r_vals, decreasing = TRUE)
+topN <- 5L
+pick <- ord[seq_len(min(topN, length(ord)))]
+```
+
+# Convert linear indices
+```{r}
+ij <- arrayInd(which(ut)[pick], .dim = dim(cor_rows))
+pairs_df <- data.frame(
+  gene1 = rownames(cor_rows)[ij[,1]],
+  gene2 = colnames(cor_rows)[ij[,2]],
+  r     = r_vals[pick],
+  row.names = NULL,
+  stringsAsFactors = FALSE
+)
+```
+#Explanation of “why” they are close
+#per-gene dispersion across samples
+```{r}
+gene_sd  <- apply(G, 1, sd,  na.rm = TRUE)
+gene_iqr <- apply(G, 1, IQR, na.rm = TRUE)
+```
+
+# per-gene group effect (oral vs aboral), as |Δmean| standardized by pooled SD (Cohen's d)
+#   align sample labels from col_data
+```{r}
+samp_col_name <- intersect(names(col_data), c("sample","Sample"))[1]
+type_col_name <- intersect(names(col_data), c("type","Type","group","Group","condition","Condition"))[1]
+stopifnot(!is.na(samp_col_name), !is.na(type_col_name))
+```
+
+```{r}
+norm <- function(v) gsub("[^A-Za-z0-9]", "", tolower(v))
+key_counts <- norm(colnames(G))
+key_meta   <- norm(col_data[[samp_col_name]])
+lab_vec <- rep(NA_character_, ncol(G))
+for (j in seq_along(colnames(G))) {
+  hit <- which(key_meta == key_counts[j])
+  if (length(hit) >= 1) lab_vec[j] <- as.character(col_data[[type_col_name]][hit[1]])
+}
+labs <- factor(lab_vec)
+```
+
+# Effect-size function per gene
+```{r}
+effect_size <- function(x, y = labs) {
+  if (anyNA(y) || length(levels(y)) != 2) return(NA_real_)
+  g1 <- x[y == levels(y)[1]]
+  g2 <- x[y == levels(y)[2]]
+  if (length(g1) < 2 || length(g2) < 2) return(NA_real_)
+  m1 <- mean(g1, na.rm = TRUE); m2 <- mean(g2, na.rm = TRUE)
+  s1 <- sd(g1,   na.rm = TRUE); s2 <- sd(g2,   na.rm = TRUE)
+  sp <- sqrt(((length(g1)-1)*s1^2 + (length(g2)-1)*s2^2) / (length(g1)+length(g2)-2))
+  if (!is.finite(sp) || sp == 0) return(NA_real_)
+  abs((m1 - m2) / sp)   # |Cohen's d|
+}
+```
+
+```{r}
+gene_eff <- apply(G, 1, effect_size)
+```
+
+#summarize diagnostics for the top pairs
+```{r}
+q_sd_low <- quantile(gene_sd, 0.25, na.rm = TRUE)  # “low variance” threshold
+q_eff_hi <- quantile(gene_eff, 0.75, na.rm = TRUE) # “large group effect” threshold
+
+annot <- within(pairs_df, {
+  sd_mean   <- (gene_sd[gene1]  + gene_sd[gene2])  / 2
+  iqr_mean  <- (gene_iqr[gene1] + gene_iqr[gene2]) / 2
+  eff_mean  <- (gene_eff[gene1] + gene_eff[gene2]) / 2  # avg |d| across the two genes
+
+  reason <- ifelse(sd_mean < q_sd_low & (is.na(eff_mean) | eff_mean < 0.5),
+                   "High r likely due to low variance (flat profiles)",
+            ifelse(!is.na(eff_mean) & eff_mean >= q_eff_hi,
+                   "High r likely driven by strong between-group shifts",
+                   "High r with moderate variance (both genes track across samples)"))
+})
+```
+
+#Inspect top pairs
+```{r}
+annot <- annot[order(-annot$r), ]  # sort by correlation (desc)
+annot$sd_mean  <- round(annot$sd_mean, 2)
+annot$iqr_mean <- round(annot$iqr_mean, 2)
+annot$eff_mean <- round(annot$eff_mean, 2)
+annot$r        <- round(annot$r, 3)
+print(annot)
+```
+
+# Quick summary: why are top pairs close?
+```{r}
+summary_reason <- sort(table(annot$reason), decreasing = TRUE)
+print(summary_reason)
+```
+#Answer: The top correlated gene pairs show perfect correlations due to uniformly low expression variability rather than shared regulation or tissue-specific patterns. Their similarity results from lack of variation, not from coordinated biological change between the oral and aboral groups.
+
+#Question 5
+
+# Bin genes per column into Low / Medium / High
+
+```{r}
+gene_col    <- if ("Gene" %in% names(count_data)) "Gene" else names(count_data)[1]
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+
+
+# Choose the matrix to use
+```{r}
+D <- if (exists("scaled_data")) scaled_data else count_data
+```
+#Build a long table with log1p counts
+```{r}
+long <- do.call(rbind, lapply(sample_cols, function(s) {
+  x  <- as.numeric(D[[s]])
+  lx <- log1p(x)  # log(1 + count), robust to zeros / skew
+  qs <- quantile(lx, probs = c(1/3, 2/3), na.rm = TRUE, names = FALSE)
+  cutpoint_low  <- qs[1]
+  cutpoint_high <- qs[2]
+  bin <- ifelse(lx <= cutpoint_low, "Low",
+                ifelse(lx <= cutpoint_high, "Medium", "High"))
+  data.frame(
+    gene_id = D[[gene_col]],
+    sample  = s,
+    count   = x,
+    log1p   = lx,
+    low_thr = cutpoint_low,
+    high_thr= cutpoint_high,
+    bin     = factor(bin, levels = c("Low","Medium","High")),
+    stringsAsFactors = FALSE
+  )
+}))
+```
+
+
+#Quality check
+```{r}
+bin_counts <- with(long, as.data.frame(table(sample, bin)))
+bin_counts <- bin_counts[order(bin_counts$sample, bin_counts$bin), ]
+print(bin_counts)
+```
+
+
+# Thresholds
+```{r}
+thresholds <- unique(long[, c("sample","low_thr","high_thr")])
+thresholds
+```
+
+#Answer Because RNA-seq counts are extremely right-skewed and include many zeros, I would bin within each column (sample) using the tertiles of log-transformed counts: Because RNA-seq counts are extremely right-skewed and include many zeros, I would bin within each column (sample) using the tertiles of log-transformed counts: This approach is data-driven, robust to outliers, and guarantees that each sample is partitioned into three populated groups even if overall library sizes differ (i.e., it doesn’t force cross-sample comparability—only within-sample ranking).
+
+#Question 6
+
+#Identify columns
+```{r}
+gene_col    <- if ("Gene" %in% names(count_data)) "Gene" else names(count_data)[1]
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+
+# Use scaled data
+```{r}
+D <- if (exists("scaled_data")) scaled_data else count_data
+```
+
+# Create a matrix of gene x samples
+```{r}
+G <- as.matrix(D[, sample_cols, drop = FALSE])
+rownames(G) <- as.character(D[[gene_col]])
+storage.mode(G) <- "numeric"
+```
+
+
+# Exclude genes with low overall expression (mean count < threshold)
+```{r}
+threshold <- 10   # adjust as needed for your data
+gene_means <- rowMeans(G, na.rm = TRUE)
+G_filtered <- G[gene_means >= threshold, , drop = FALSE]
+message(sprintf("Retained %d genes with mean >= %.1f", nrow(G_filtered), threshold))
+```
+#Output: Retained 12821 genes with mean >= 10.0
+
+# Compute variability (standard deviation)
+```{r}
+gene_sd <- apply(G_filtered, 1, sd, na.rm = TRUE)
+```
+
+# Get top and bottom 5 by variability
+```{r}
+top5_var   <- head(sort(gene_sd, decreasing = TRUE), 5)
+bottom5_var <- head(sort(gene_sd, decreasing = FALSE), 5)
+
+top5_df <- data.frame(
+  gene_id = names(top5_var),
+  sd = round(top5_var, 2),
+  mean = round(gene_means[names(top5_var)], 2),
+  stringsAsFactors = FALSE
+)
+
+bottom5_df <- data.frame(
+  gene_id = names(bottom5_var),
+  sd = round(bottom5_var, 2),
+  mean = round(gene_means[names(bottom5_var)], 2),
+  stringsAsFactors = FALSE
+)
+```
+
+#Answer/ List
+```{r}
+cat("\nTop 5 most variable genes:\n")
+print(top5_df)
+
+cat("\nTop 5 least variable genes (excluding low expression):\n")
+print(bottom5_df)
+```
+
+
+#Question 7
+
+# Identify gene & sample columns to build matrix
+
+```{r}
+gene_col    <- if ("Gene" %in% names(count_data)) "Gene" else names(count_data)[1]
+sample_cols <- setdiff(names(count_data), gene_col)
+```
+# Use scaled data
+```{r}
+D <- if (exists("scaled_data")) scaled_data else count_data
+```
+#Build expression matrix
+```{r}
+G <- as.matrix(D[, sample_cols, drop = FALSE])
+rownames(G) <- as.character(D[[gene_col]])
+storage.mode(G) <- "numeric"
+```
+
+# Align sample labels from col_data$Sample and col_data$condition
+```{r}
+samp_col_name <- "Sample"
+label_col_name <- "condition"
+```
+
+# Normalize names to match (ignore dashes, underscores, case)
+```{r}
+norm <- function(v) gsub("[^A-Za-z0-9]", "", tolower(v))
+key_counts <- norm(colnames(G))
+key_meta   <- norm(col_data[[samp_col_name]])
+
+labs <- sapply(colnames(G), function(nm) {
+  idx <- which(key_meta == norm(nm))
+  if (length(idx) >= 1) tolower(trimws(col_data[[label_col_name]][idx[1]])) else NA_character_
+})
+```
+```{r}
+labs <- factor(labs, levels = c("aboral","oral"))
+stopifnot(nlevels(labs) == 2, all(!is.na(labs)))
+```
+```{r}
+groupA <- levels(labs)[1]  # "aboral"
+groupB <- levels(labs)[2]  # "oral"
+```
+
+#Filter out low-expression genes
+```{r}
+baseMean <- rowMeans(G, na.rm = TRUE)
+keep <- baseMean >= 10   # exclude low-expression genes
+Gk <- G[keep, , drop = FALSE]
+baseMean_k <- baseMean[keep]
+```
+
+# Transform counts (log2 scale) for t-tests
+```{r}
+Y <- log2(Gk + 1)
+```
+
+#Perform Welch t-test per gene
+```{r}
+grpA_idx <- which(labs == groupA)
+grpB_idx <- which(labs == groupB)
+```
+
+```{r}
+tt <- apply(Y, 1, function(x) {
+  xa <- x[grpA_idx]; xb <- x[grpB_idx]
+  out <- try(t.test(xa, xb, var.equal = FALSE), silent = TRUE)
+  if (inherits(out, "try-error")) return(c(t = NA, p = NA))
+  c(t = unname(out$statistic), p = out$p.value)
+})
+
+tstat <- tt["t", ]
+pval  <- tt["p", ]
+padj  <- p.adjust(pval, method = "BH")
+```
+
+#log2 fold-change (A - B)
+```{r}
+mA <- rowMeans(Y[, grpA_idx, drop = FALSE], na.rm = TRUE)
+mB <- rowMeans(Y[, grpB_idx, drop = FALSE], na.rm = TRUE)
+log2FC <- mA - mB
+```
+
+
+
+# results table
+```{r}
+res <- data.frame(
+  gene_id  = rownames(Y),
+  baseMean = baseMean_k,
+  meanA    = mA,
+  meanB    = mB,
+  log2FC   = log2FC,
+  t        = tstat,
+  pval     = pval,
+  padj     = padj,
+  stringsAsFactors = FALSE
+)
+```
+
+
+# 10) Top 5 up/down by effect size
+```{r}
+alpha <- 0.05
+sig <- res[is.finite(res$padj) & res$padj < alpha, ]
+
+top_up   <- head(sig[order(-sig$log2FC), ], 5)
+top_down <- head(sig[order(sig$log2FC),  ], 5)
+if (nrow(top_up)   < 5) top_up   <- head(res[order(-res$log2FC), ], 5)
+if (nrow(top_down) < 5) top_down <- head(res[order(res$log2FC),  ], 5)
+
+cat(sprintf("\nGroups: %s (A) vs %s (B)\n", groupA, groupB))
+cat("\nTop 5 UP-regulated (A > B):\n")
+print(top_up[,  c("gene_id","log2FC","padj","baseMean")], row.names = FALSE)
+
+cat("\nTop 5 DOWN-regulated (A < B):\n")
+print(top_down[,c("gene_id","log2FC","padj","baseMean")], row.names = FALSE)
+```
+
+# Rank by p-value to see difference
+```{r}
+top_by_p <- head(res[order(res$pval, -abs(res$log2FC)), ], 10)
+cat("\nTop genes by smallest p-value:\n")
+print(top_by_p[, c("gene_id","log2FC","pval","padj","baseMean")], row.names = FALSE)
+```
+
+#Answer: When ranking solely by p-value (rather than fold change magnitude), many of the same genes appear at the top; however, additional genes with very low expression levels can sometimes enter the list. These genes may have small variance but extremely low mean counts, which can artificially yield small p-values despite having little biological significance. The log₂ fold change (log₂FC) represents the difference in mean expression between the two groups, where negative values indicate higher expression in oral samples, and positive values indicate higher expression in aboral samples. The t-test identified several genes with large absolute log₂ fold changes and highly significant p-values, indicating strong differential expression between oral and aboral tissues.The five most up-regulated genes show substantial negative log₂FC values, suggesting they are expressed much higher in one tissue group (likely oral), while the most down-regulated genes show strong suppression in that same tissue relative to the other.
+
+#To answer: Should low-expression genes be excluded?
+#Yes.
+#Low-expression genes (e.g., mean count < 10–20) contribute more technical noise than true biological signal. Their apparent statistical significance often results from low variance or small sample noise. Excluding such genes — as was done here by filtering out genes with low mean expression — helps ensure that the top-ranked genes represent meaningful differential expression rather than artifacts of sparse or near-zero counts. In short, the t-test effectively distinguishes highly variable, biologically relevant genes between oral and aboral groups. Ranking by effect size (log₂FC) prioritizes genes with strong expression changes, while ranking by p-value alone can inflate the importance of lowly expressed genes that should generally be excluded from interpretation.
+
