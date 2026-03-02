@@ -1,0 +1,690 @@
+---
+title: "Assignment6"
+output: html_document
+date: "2025-10-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 1) Sample 20 people, count sexes (repeat)
+```{r}
+set.seed(123)
+```
+
+```{r}
+path <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets/weight-height.csv"
+```
+
+```{r}
+dat <- read.csv(path, stringsAsFactors = FALSE)
+names(dat) <- gsub("\\s+","_", tolower(names(dat)))
+```
+
+
+# Find the gender column
+```{r}
+gcol <- intersect(names(dat), c("gender","sex"))
+if (length(gcol) == 0) stop("No 'gender' or 'sex' column found.")
+gcol <- gcol[1]
+```
+
+```{r}
+dat$gender_std <- NA_character_
+dat$gender_std[tolower(dat[[gcol]]) %in% c("male","m","man","men")]     <- "Male"
+dat$gender_std[tolower(dat[[gcol]]) %in% c("female","f","woman","women")] <- "Female"
+dat <- subset(dat, !is.na(gender_std))
+```
+
+
+# 1) Repeat random sampling of n=20 and count Male/Female
+
+```{r}
+n <- 20
+B <- 10  # "repeat a few times" -> change if you want more
+samples <- replicate(B, {
+  s <- dat[sample(nrow(dat), n, replace = FALSE), "gender_std"]
+  c(Males = sum(s == "Male"), Females = sum(s == "Female"))
+})
+sample_counts <- as.data.frame(t(samples))
+sample_counts$trial <- seq_len(B)
+sample_counts <- sample_counts[, c("trial", "Males", "Females")]
+print(sample_counts, row.names = FALSE)
+```
+
+
+# a) Chi-square test on the FULL DATASET:
+# Null hypothesis: proportion of men = 0.5 (and women = 0.5)
+```{r}
+pop_counts <- table(dat$gender_std)[c("Male","Female")]
+pop_counts[is.na(pop_counts)] <- 0
+
+cat("\n--- Population counts in the CSV ---\n")
+print(pop_counts)
+```
+#Outpts: Male 5000 Female 5000
+
+```{r}
+chisq_res <- chisq.test(x = as.numeric(pop_counts), p = c(0.5, 0.5))
+cat("\n--- Chi-square goodness-of-fit (H0: 50% Male / 50% Female) ---\n")
+print(chisq_res)
+```
+#Output: X-squared = 0, df = 1, p-value = 1
+
+## Helper line
+
+```{r}
+alpha <- 0.05
+cat(sprintf("\nDecision at alpha = %.2f: %s H0\n",
+            alpha,
+            if (chisq_res$p.value < alpha) "Reject" else "Fail to reject"))
+```
+
+#Output: Decision at alpha = 0.05: Fail to reject H0
+
+
+# 1a) The weight-height dataset is balanced by sex (50 M/50 F), so this will cause a failure to reject H₀ (p ≫ 0.05) because even a small deviation can produce a small p value. With large N, the chi-square test is sensitive to tiny differences. The sample-of-20 results can look imbalanced in individual sample draws, but that is due to sampling variability. It does not change the population test which uses the entire dataset to evaluate the hypothesis.
+
+
+# 1b)Setup of new population
+
+```{r}
+male_pool   <- subset(dat, gender_std == "Male")
+female_pool <- subset(dat, gender_std == "Female")
+stopifnot(nrow(male_pool) > 0, nrow(female_pool) > 0)
+```
+
+#Population N = 3000, men:women = 2:1
+
+```{r}
+N_total  <- 3000L
+ratio_mw <- 2        # men / women
+N_male   <- as.integer(round((ratio_mw/(ratio_mw+1)) * N_total))  # 2000
+N_female <- N_total - N_male                                      # 1000
+```
+
+```{r}
+syn_m <- male_pool[sample(nrow(male_pool),   N_male,   replace = TRUE), ]
+syn_f <- female_pool[sample(nrow(female_pool), N_female, replace = TRUE), ]
+pop   <- rbind(syn_m, syn_f)
+# optional: shuffle rows
+pop   <- pop[sample(nrow(pop)), , drop = FALSE]
+```
+
+```{r}
+table(pop$gender_std)
+```
+
+
+# Function to sample n, count sexes, and test Null hypothesis: 50/50
+```{r}
+test_sample <- function(pop_df, n, alpha = 0.05) {
+  s <- pop_df[sample(nrow(pop_df), n, replace = FALSE), "gender_std"]
+  counts <- table(factor(s, levels = c("Male","Female")))
+  # goodness-of-fit against 0.5 / 0.5
+  chi <- suppressWarnings(chisq.test(x = as.numeric(counts), p = c(0.5, 0.5)))
+  list(n = n,
+       counts = counts,
+       chisq = unname(chi$statistic),
+       df = unname(chi$parameter),
+       p = chi$p.value,
+       decision = ifelse(chi$p.value < alpha, "Reject H0", "Fail to reject H0"))
+}
+```
+
+
+# Start at n=20, increase until significant (or max n)
+```{r}
+alpha     <- 0.05
+n_start   <- 20L
+n_step    <- 5L
+n_max     <- 400L  # safety cap
+
+results <- list()
+n <- n_start
+repeat {
+  res <- test_sample(pop, n, alpha = alpha)
+  results[[length(results) + 1]] <- res
+  cat(sprintf("n=%3d | Male=%2d, Female=%2d | X^2=%.3f (df=%d), p=%.4f -> %s\n",
+              res$n, res$counts["Male"], res$counts["Female"],
+              res$chisq, res$df, res$p, res$decision))
+  if (res$p < alpha || n >= n_max) break
+  n <- n + n_step
+}
+```
+
+#Output: n= 20 | Male=14, Female= 6 | X^2=3.200 (df=1), p=0.0736 -> Fail to reject H0
+#n= 25 | Male=21, Female= 4 | X^2=11.560 (df=1), p=0.0007 -> Reject H0
+
+
+#Gather results in a data.frame
+```{r}
+df_res <- do.call(rbind, lapply(results, function(r)
+  data.frame(n = r$n,
+             male = as.integer(r$counts["Male"]),
+             female = as.integer(r$counts["Female"]),
+             chisq = r$chisq, df = r$df, p = r$p,
+             decision = r$decision)))
+print(df_res, row.names = FALSE)
+```
+
+#Answer: significance is reached at n=25
+
+
+# Population of size N_total with men:women ratio r:1
+
+```{r}
+build_pop <- function(r, N_total = 3000L) {
+  n_m <- as.integer(round((r/(r+1)) * N_total))
+  n_f <- N_total - n_m
+  syn_m <- male_pool[sample(nrow(male_pool),   n_m, replace = TRUE), ]
+  syn_f <- female_pool[sample(nrow(female_pool), n_f, replace = TRUE), ]
+  pop <- rbind(syn_m, syn_f)
+  pop[sample(nrow(pop)), , drop = FALSE]
+}
+```
+
+# Sample draw of size n and chi-square GOF for H0: 50/50
+```{r}
+chi_once <- function(pop, n, alpha = 0.05) {
+  s <- pop[sample(nrow(pop), n, replace = FALSE), "gender_std"]
+  ct <- table(factor(s, levels = c("Male","Female")))
+  res <- suppressWarnings(chisq.test(as.numeric(ct), p = c(0.5, 0.5)))
+  list(p = res$p.value, counts = ct)
+}
+```
+
+
+# Find smallest n that rejects at alpha
+```{r}
+min_n_single <- function(pop, n_start = 20L, n_step = 5L, n_max = 1000L, alpha = 0.05) {
+  for (n in seq(n_start, n_max, by = n_step)) {
+    r <- chi_once(pop, n, alpha)
+    if (r$p < alpha) return(list(n = n, p = r$p, counts = r$counts))
+  }
+  list(n = NA_integer_, p = NA_real_, counts = NA)
+}
+```
+
+
+## Finding the smallest n 
+```{r}
+min_n_power <- function(pop, power_target = 0.80, trials = 200L,
+                        n_start = 20L, n_step = 5L, n_max = 1000L, alpha = 0.05) {
+  for (n in seq(n_start, n_max, by = n_step)) {
+    pvals <- replicate(trials, chi_once(pop, n, alpha)$p)
+    pow <- mean(pvals < alpha)
+    if (pow >= power_target) return(list(n = n, power = pow))
+  }
+  list(n = NA_integer_, power = NA_real_)
+}
+```
+
+## Normal-approx sample-size (two-sided) for testing 
+
+```{r}
+n_approx <- function(r) {
+  p_true <- r/(r+1)
+  d <- abs(p_true - 0.5)
+  if (d == 0) return(Inf)
+  ceiling((1.96^2 * 0.25) / (d^2))
+}
+
+ratios <- seq(2.0, 1.1, by = -0.1)
+
+results <- do.call(rbind, lapply(ratios, function(r) {
+  pop <- build_pop(r, 3000L)
+  pa <- n_approx(r)
+  one <- min_n_single(pop, n_start = 20L, n_step = 5L, n_max = 1000L)
+  pow <- min_n_power(pop, power_target = 0.80, trials = 200L,
+                     n_start = 20L, n_step = 5L, n_max = 1000L)
+  data.frame(
+    ratio_m_w = r,
+    true_p_male = round(r/(r+1), 4),
+    n_first_reject_single = one$n,
+    p_at_that_n = signif(one$p, 4),
+    n_for_80pct_power = pow$n,
+    est_power_at_that_n = signif(pow$power, 3),
+    n_normal_approx = pa,
+    stringsAsFactors = FALSE
+  )
+}))
+```
+
+```{r}
+print(results, row.names = FALSE)
+```
+
+
+# 1c) Answer: A sample size of at least 35 is needed for each ration to reach significnace but there is no single sample to be significant. This means as the true ratio approaches 1:1, the deviation from 50/50 shrinks, and the chi-square signal scales. Required n grows roughly with 1/(p−0.5)^2. In short, to reliably flag small imbalances, plan for large n because one will often miss modest departures from 50/50 even if the population isn’t perfectly balanced.
+
+
+# 1d)
+# NYC sex ratio)
+
+```{r}
+p_true <- 1.07 / (1 + 1.07)   # ≈ 0.5169
+alpha  <- 0.05
+set.seed(123)
+```
+
+## Normal-approx n to detect p != 0.5 at alpha=0.05 (two-sided)
+```{r}
+n_approx <- ceiling((1.96^2 * 0.25) / (abs(p_true - 0.5)^2))
+n_approx
+```
+
+## Simulation: smallest n with ~80% power
+```{r}
+power_for_n <- function(n, B = 2000, alpha = 0.05, p_val = p_true) {
+  x <- rbinom(B, size = n, prob = p_val)
+  pvals <- sapply(x, function(k) {
+    suppressWarnings(chisq.test(x = c(k, n - k), p = c(0.5, 0.5))$p.value)
+  })
+  mean(pvals < alpha)
+}
+```
+
+```{r}
+ns  <- seq(1000, 6000, by = 100)
+pow <- sapply(ns, power_for_n)
+cbind(n = ns, power = round(pow, 3))[which(pow >= 0.80)[1], , drop = FALSE]
+```
+
+## Estimation sample sizes for 95% CI MOE targets
+```{r}
+moe    <- c(0.02, 0.01, 0.005)  # ±2pp, ±1pp, ±0.5pp
+n_moe  <- ceiling((1.96^2 * p_true * (1 - p_true)) / (moe^2))
+data.frame(MOE = paste0("±", moe*100, "%"), n = n_moe)
+```
+## (Optional) finite-population correction, N = 8e6
+N <- 8e6
+fpc <- function(n, N) n / (1 + (n - 1)/N)
+fpc(n_approx, N)
+
+
+
+#1d) Answer: A sample of about 9,594 New Yorkers is needed for a reliable estimate
+
+#Part II
+
+#Set up
+
+```{r}
+set.seed(1)
+```
+
+# Adjust this path only if your folder changed
+```{r}
+fpath <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets/diffexpr-results_no_p.csv"
+```
+
+# Read the data and preserve column names
+
+```{r}
+dat <- read.csv(fpath, check.names = FALSE, stringsAsFactors = FALSE)
+```
+
+# Identify gene id column (first that looks like gene/id/name; else first col)
+```{r}
+gene_col <- names(dat)[grepl("gene|id|name", names(dat), ignore.case = TRUE)]
+gene_col <- if (length(gene_col)) gene_col[1] else names(dat)[1]
+dat[[gene_col]] <- as.character(dat[[gene_col]])
+```
+
+# Identify sample columns (flexible to hyphen/underscore)
+```{r}
+is_aboral <- grepl("^\\s*aboral(\\b|[-_])", names(dat), ignore.case = TRUE)
+is_oral   <- grepl("^\\s*oral(\\b|[-_])",   names(dat), ignore.case = TRUE)
+
+aboral_cols <- names(dat)[is_aboral]
+oral_cols   <- names(dat)[is_oral]
+
+if (length(aboral_cols) < 2 || length(oral_cols) < 2) {
+  stop(paste0(
+    "Could not find expected aboral/oral columns.\n",
+    "Found aboral: ", paste(aboral_cols, collapse=", "),
+    "\nFound oral:   ", paste(oral_cols, collapse=", ")
+  ))
+}
+```
+
+# Coerce sample columns to numeric (silently turn non-numeric to NA)
+```{r}
+num_cols <- c(aboral_cols, oral_cols)
+dat[num_cols] <- lapply(dat[num_cols], function(x) suppressWarnings(as.numeric(x)))
+```
+
+# Per-gene stats
+```{r}
+pseudocount <- 1e-6  
+
+row_stats <- function(row) {
+  a <- as.numeric(row[aboral_cols])
+  o <- as.numeric(row[oral_cols])
+
+  a <- a[!is.na(a)]
+  o <- o[!is.na(o)]
+
+  ma <- mean(a)
+  mo <- mean(o)
+
+  # Welch two-sample t-test (two-sided)
+  pval <- tryCatch(t.test(o, a)$p.value, error = function(e) NA_real_)
+
+  diff_mean <- mo - ma
+  log2fc    <- log2((mo + pseudocount) / (ma + pseudocount))
+
+  c(mean_aboral = ma, mean_oral = mo, diff = diff_mean, log2FC = log2fc, pvalue = pval)
+}
+```
+
+```{r}
+res_mat <- t(apply(dat, 1, row_stats))
+res <- cbind(
+  data.frame(gene = dat[[gene_col]], check.names = FALSE),
+  as.data.frame(res_mat)
+)
+```
+
+# Multiple testing: Benjamini–Hochberg FDR
+```{r}
+res$padj <- p.adjust(res$pvalue, method = "BH")
+```
+
+# Significant at FDR 10%
+```{r}
+alpha_fdr <- 0.10
+res$signif_FDR10 <- !is.na(res$padj) & (res$padj <= alpha_fdr)
+```
+
+# Count + order
+```{r}
+n_sig <- sum(res$signif_FDR10, na.rm = TRUE)
+n_all <- nrow(res)
+cat(sprintf("\nGenes passing FDR 10%%: %d out of %d\n", n_sig, n_all))
+```
+#Output: Genes passing FDR 10%: 48 out of 16548
+
+```{r}
+res <- res[order(res$padj, -abs(res$log2FC)), ]
+```
+
+# Write outputs in the same folder as the input file
+```{r}
+out_dir <- dirname(fpath) # <- **the directory**, not the CSV file itself
+stopifnot(dir.exists(out_dir))
+
+out_all <- file.path(out_dir, "diffexpr_with_p_and_fdr.csv")
+out_sig <- file.path(out_dir, "diffexpr_FDR10_only.csv")
+
+write.csv(res, out_all, row.names = FALSE)
+write.csv(subset(res, signif_FDR10), out_sig, row.names = FALSE)
+
+cat("Wrote:\n  - ", normalizePath(out_all), "\n  - ", normalizePath(out_sig), "\n", sep = "")
+```
+# 2a) Answer: We have 48 genes.
+
+# 2b)
+
+```{r}
+res_mat <- t(apply(dat, 1, row_stats))
+res <- cbind(data.frame(gene = dat[[gene_col]], check.names = FALSE),
+             as.data.frame(res_mat))
+```
+
+# Benjamini–Hochberg FDR
+```{r}
+res$padj <- p.adjust(res$pvalue, method = "BH")
+```
+
+# Thresholds
+```{r}
+thr10 <- 0.10
+thr20 <- 0.20
+
+res$FDR10 <- !is.na(res$padj) & res$padj <= thr10
+res$FDR20 <- !is.na(res$padj) & res$padj <= thr20
+
+n_all <- nrow(res)
+n10 <- sum(res$FDR10, na.rm = TRUE)
+n20 <- sum(res$FDR20, na.rm = TRUE)
+delta <- n20 - n10
+
+cat(sprintf("\nGenes passing FDR 10%%: %d / %d\n", n10, n_all))
+cat(sprintf("Genes passing FDR 20%%: %d / %d\n", n20, n_all))
+cat(sprintf("Additional genes when relaxing to 20%% FDR: %d\n\n", delta))
+```
+#Output: Genes passing FDR 10%: 48 / 16548
+#Genes passing FDR 20%: 664 / 16548
+#Additional genes when relaxing to 20% FDR: 616
+
+# Save the FDR-20% list (with effect sizes & padj), next to the input file
+```{r}
+out_dir <- dirname(fpath)
+out20 <- file.path(out_dir, "diffexpr_FDR20_only.csv")
+write.csv(subset(res, FDR20)[, c("gene","mean_aboral","mean_oral","diff","log2FC","pvalue","padj")],
+          out20, row.names = FALSE)
+cat("Wrote FDR 20% gene list to:\n  ", normalizePath(out20), "\n", sep = "")
+```
+
+
+#2b Answer: At 20% the number of genes passing is 664 and additional genes 616.
+
+```{r}
+fpath <- "~/Documents/Applied Biostats for Bioinformatics Fall 2025/BiostatsFall2025/Datasets/diffexpr-results_no_p.csv"
+```
+# Read data
+```{R}
+dat <- read.csv(fpath, check.names = FALSE, stringsAsFactors = FALSE)
+```
+# Gene id column: first matching gene/id/name; else first column
+
+```{r}
+gene_col <- names(dat)[grepl("gene|id|name", names(dat), ignore.case = TRUE)]
+gene_col <- if (length(gene_col)) gene_col[1] else names(dat)[1]
+dat[[gene_col]] <- as.character(dat[[gene_col]])
+```
+
+# Find sample columns 
+```{r}
+is_aboral <- grepl("^\\s*aboral(\\b|[-_])", names(dat), ignore.case = TRUE)
+is_oral   <- grepl("^\\s*oral(\\b|[-_])",   names(dat), ignore.case = TRUE)
+aboral_cols <- names(dat)[is_aboral]
+oral_cols   <- names(dat)[is_oral]
+
+if (length(aboral_cols) < 2 || length(oral_cols) < 2) {
+  stop(paste0(
+    "Could not find expected aboral/oral columns.\n",
+    "aboral: ", paste(aboral_cols, collapse=", "),
+    "\noral:   ", paste(oral_cols, collapse=", ")
+  ))
+}
+```
+
+# Coerce to numeric (non-numeric -> NA)
+```{r}
+num_cols <- c(aboral_cols, oral_cols)
+dat[num_cols] <- lapply(dat[num_cols], function(x) suppressWarnings(as.numeric(x)))
+```
+
+# Per-gene stats and p-values (Welch t-test, two-sided)
+```{r}
+pseudocount <- 1e-6
+row_stats <- function(row) {
+  a <- as.numeric(row[aboral_cols]); a <- a[!is.na(a)]
+  o <- as.numeric(row[oral_cols]);   o <- o[!is.na(o)]
+  ma <- mean(a); mo <- mean(o)
+  pval <- tryCatch(t.test(o, a)$p.value, error = function(e) NA_real_)
+  diff_mean <- mo - ma
+  log2fc    <- log2((mo + pseudocount) / (ma + pseudocount))
+  c(mean_aboral = ma, mean_oral = mo, diff = diff_mean, log2FC = log2fc, pvalue = pval)
+}
+
+res_mat <- t(apply(dat, 1, row_stats))
+res <- cbind(data.frame(gene = dat[[gene_col]], check.names = FALSE),
+             as.data.frame(res_mat))
+```
+
+# Bonferroni correction
+```{r}
+res$padj_bonf <- p.adjust(res$pvalue, method = "bonferroni")
+```
+# Survive Bonferroni at alpha = 0.05
+```{r}
+res$bonf_signif <- is.finite(res$padj_bonf) & (res$padj_bonf <= alpha)
+
+n_all  <- nrow(res)
+n_bonf <- sum(res$bonf_signif, na.rm = TRUE)
+cat(sprintf("\nGenes passing Bonferroni (alpha=0.05): %d out of %d\n", n_bonf, n_all))
+```
+#Output: Genes passing Bonferroni (alpha=0.05): 3 out of 16548
+
+# Order by Bonferroni-adjusted p then |log2FC|
+```{r}
+res <- res[order(res$padj_bonf, -abs(res$log2FC)), ]
+```
+# Write Bonferroni-significant genes next to the input file
+```{r}
+out_dir <- dirname(fpath)
+out_bonf <- file.path(out_dir, "diffexpr_Bonferroni05_only.csv")
+write.csv(subset(res, bonf_signif)[, c("gene","mean_aboral","mean_oral","diff","log2FC","pvalue","padj_bonf")],
+          out_bonf, row.names = FALSE)
+cat("Wrote Bonferroni-significant gene list to:\n  ", normalizePath(out_bonf), "\n", sep = "")
+```
+
+# 2c) Answer: There are 3 out of 16548 genes passing with Bonferroni's correction.
+
+#2d
+# Identify gene column and sample columns
+```{r}
+gene_col <- names(dat)[grepl("gene|id|name", names(dat), ignore.case = TRUE)]
+gene_col <- if (length(gene_col)) gene_col[1] else names(dat)[1]
+dat[[gene_col]] <- as.character(dat[[gene_col]])
+
+is_aboral <- grepl("^\\s*aboral(\\b|[-_])", names(dat), ignore.case = TRUE)
+is_oral   <- grepl("^\\s*oral(\\b|[-_])",   names(dat), ignore.case = TRUE)
+
+aboral_cols <- names(dat)[is_aboral]
+oral_cols   <- names(dat)[is_oral]
+
+if (length(aboral_cols) < 2 || length(oral_cols) < 2) {
+  stop(paste0(
+    "Could not find expected aboral/oral columns.\n",
+    "aboral: ", paste(aboral_cols, collapse=", "),
+    "\noral:   ", paste(oral_cols, collapse=", ")
+  ))
+}
+```
+
+# Coerce to numeric 
+```{r}
+num_cols <- c(aboral_cols, oral_cols)
+dat[num_cols] <- lapply(dat[num_cols], function(x) suppressWarnings(as.numeric(x)))
+```
+
+
+# Helpers
+```{r}
+pseudocount <- 1e-6
+cv_safe <- function(x) {
+  x <- x[is.finite(x)]
+  mu <- mean(x, na.rm = TRUE)
+  sd <- stats::sd(x, na.rm = TRUE)
+  if (!is.finite(mu) || mu == 0) return(Inf)
+  sd / abs(mu)
+}
+```
+
+# Cliff's delta (nonparametric effect size, no p-values)
+```{r}
+cliffs_delta <- function(x, y) {
+  x <- x[!is.na(x)]; y <- y[!is.na(y)]
+  if (length(x) == 0 || length(y) == 0) return(NA_real_)
+  # delta = (num(x>y) - num(x<y)) / (length(x)*length(y))
+  # Efficient computation via outer comparison
+  cmp <- outer(x, y, FUN = "-")
+  pos <- sum(cmp > 0)
+  neg <- sum(cmp < 0)
+  (pos - neg) / (length(x) * length(y))
+}
+```
+
+# Compute per-gene summaries 
+```{r}
+summ_one <- function(row) {
+  a <- as.numeric(row[aboral_cols]); a <- a[!is.na(a)]
+  o <- as.numeric(row[oral_cols]);   o <- o[!is.na(o)]
+
+  mean_a <- mean(a);  mean_o <- mean(o)
+  med_a  <- median(a); med_o <- median(o)
+
+  log2fc_mean <- log2((mean_o + pseudocount)/(mean_a + pseudocount))
+  log2fc_med  <- log2((med_o  + pseudocount)/(med_a  + pseudocount))
+
+  cv_a <- cv_safe(a); cv_o <- cv_safe(o)
+
+  delta <- cliffs_delta(o, a)   # positive means oral > aboral
+
+  c(mean_aboral = mean_a, mean_oral = mean_o,
+    median_aboral = med_a, median_oral = med_o,
+    log2FC_mean = log2fc_mean, log2FC_median = log2fc_med,
+    cv_aboral = cv_a, cv_oral = cv_o,
+    cliffs_delta = delta)
+}
+```
+```{r}
+res_mat <- t(apply(dat, 1, summ_one))
+res <- cbind(
+  data.frame(gene = dat[[gene_col]], check.names = FALSE),
+  as.data.frame(res_mat, stringsAsFactors = FALSE)
+)
+```
+# Selection logic 
+```{r}
+fc_thresh      <- 1.0   # >= 2-fold
+delta_thresh   <- 0.8   # "large" effect size convention
+cv_max_allowed <- 0.5
+
+res$keep <- (
+  (is.finite(res$log2FC_mean) & abs(res$log2FC_mean) >= fc_thresh |
+   is.finite(res$log2FC_median) & abs(res$log2FC_median) >= fc_thresh) &
+  is.finite(res$cliffs_delta) & abs(res$cliffs_delta) >= delta_thresh &
+  is.finite(res$cv_aboral) & is.finite(res$cv_oral) &
+  pmin(res$cv_aboral, Inf) <= cv_max_allowed &
+  pmin(res$cv_oral,   Inf) <= cv_max_allowed
+)
+```
+
+```{r}
+n_keep <- sum(res$keep, na.rm = TRUE)
+n_all  <- nrow(res)
+cat(sprintf("Selected genes (effect-size logic, no tests): %d out of %d\n", n_keep, n_all))
+```
+#Output: Selected genes (effect-size logic, no tests): 852 out of 16548
+
+# Order and write out
+```{r}
+out_dir <- dirname(fpath)
+out_file <- file.path(out_dir, "diffexpr_no_tests_effectsize_selected.csv")
+res_ord <- res[order(-abs(res$cliffs_delta), -abs(res$log2FC_mean), -abs(res$log2FC_median)), ]
+write.csv(res_ord[res_ord$keep, c("gene","mean_aboral","mean_oral","median_aboral","median_oral",
+                                  "log2FC_mean","log2FC_median","cv_aboral","cv_oral","cliffs_delta")],
+          out_file, row.names = FALSE)
+cat("Wrote selected genes to:\n  ", normalizePath(out_file), "\n", sep = "")
+```
+
+
+#Selected genes (effect-size logic, no tests): 852 out of 16548
+
+#Answer: I would select genes showing large, consistent expression differences between oral and aboral samples—without using any p-values—by magnitude of change,group separation, and within-group stability.The 852 genes selected had large effect sizes ad strong separation and sable within group behavior.This is a more practical rather than statistical approach.
+
+
+
+
+
+
+
+
